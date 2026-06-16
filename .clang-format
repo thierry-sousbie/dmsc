@@ -1,0 +1,10 @@
+BasedOnStyle: Google
+
+# ColumnLimit sets the maximum line length (80 characters is standard for Google style)
+ColumnLimit: 120
+
+# Additional useful C++ configurations for visibility:
+IndentWidth: 2
+AllowShortFunctionsOnASingleLine: Empty
+DerivePointerAlignment: false
+PointerAlignment: Left

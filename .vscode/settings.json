@@ -1,0 +1,24 @@
+{
+  "files.associations": {
+    "*.metal": "objective-cpp",
+    "*.m": "objective-c",
+    "*.mm": "objective-cpp"
+  },
+  "[objective-c]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+    "editor.formatOnSave": true
+  },
+  "[objective-cpp]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+    "editor.formatOnSave": true
+  },
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    }
+  },
+  "C_Cpp.default.compilerPath": "/usr/bin/clang++"
+}

@@ -1,0 +1,13 @@
+/.vscode/*
+!.vscode/settings.json
+/csrc/gpu/metal/*.h
+*.so
+/uv.lock
+/dmsc.egg-info
+.DS_Store
+visualizations
+__pycache__
+trace*.json
+*.tar.gz
+*.gz
+uv.lock

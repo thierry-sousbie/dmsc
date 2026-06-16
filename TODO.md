@@ -1,0 +1,5 @@
+- [ ] Create native PyTorch loss functions.
+- [ ] Create segmentation training sample
+- [ ] Debug `arcs_simplification` implementation on GPU.
+- [ ] Create dedicated memory workspaces for `dmsc_gpu` and `dmsc_cpu` to manage temporary tensors and minimize Host/Device memory transfers.
+- [ ] Unify the GPU and CPU core implementations, merge `dmsc_gpu.cpp` and `dmsc_cpu.cpp`.

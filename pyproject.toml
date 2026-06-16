@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "torch>=2.0.0", "numpy", "ninja"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dmsc"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "numpy",
+    "matplotlib"
+]
+
+[dependency-groups]
+dev = [
+  "ruff"
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.format]
+indent-style = "space"
+
+[tool.ruff.lint]
+# "I" enables isort rules
+select = [
+    "E",   # pycodestyle errors
+    "F",   # Pyflakes
+    "I",   # isort 
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+ignore = []
