@@ -11,7 +11,7 @@ This library computes topological critical points (maxima, minima, saddles), per
 * **Full Geometry**: Optionally extract the full geometry of the segmentation including exact ridge/valley lines and pixel-perfect basin segmentations.
 * **Morse-Smale complex**: Exact morse smale complex connectivity based on discrete Morse theory.
 
-## 🛠️ Installation
+## Installation
 
 This project is built as a PyTorch C++ Extension. We recommend using `uv` for fast dependency management and building.
 
@@ -94,7 +94,7 @@ def compute_dmsc(
 * **`verbose`**: Prints execution timings to the console.
 
 
-## 🧬 Understanding the `MSComplex` Structure
+## Understanding the `MSComplex` Structure
 
 Because this library operates on a mathematical cell complex (where edges and faces exist between pixels), raw topological entities are returned as flat 1D tensors of `cell_ids`.
 
