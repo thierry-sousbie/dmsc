@@ -43,7 +43,7 @@ You can generate complete visual dashboards of the vector fields, critical point
 ![Dual Complex Dashboard](samples/dmsc_dual.png)
 
 
-## ⚡ Quick Start & Testing
+## Quick Start & Testing
 
 To verify your installation and see the library in action, run the test script. It will extract the complex from a sample scalar field and generate the dashboard images shown above:
 
