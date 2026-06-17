@@ -19,6 +19,7 @@
 #include "./cpu/arcs_simplification.hxx"
 #include "./cpu/persistence.hxx"
 #include "./dmsc_struct.hxx"
+#include "./gpu/workspace.hxx"
 
 #ifdef __APPLE__
 #include "./gpu/dmsc_mps.hxx"
@@ -41,7 +42,7 @@ vertices/edges/faces reversed, i.e. they represent maxima/saddles/minima respect
 */
 template <bool IS_DUAL = false>
 DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persistence_threshold, int block_size,
-                                     bool return_gradient, bool trace_arcs, bool trace_manifolds) {
+                                     bool return_gradient, bool trace_arcs, bool trace_manifolds, gpu::Workspace& ws) {
   int H = scalar_field.size(0);
   int W = scalar_field.size(1);
   int Nx = W + 1;
@@ -448,14 +449,14 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
     // int num_cells = 4 * (H + 1) * (W + 1);
 
     DMSComplex result;
+    gpu::Workspace ws;
     if (is_dual) {
       result = extract_single_dmsc_gpu_t<true>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                               trace_arcs, trace_manifolds);
+                                               trace_arcs, trace_manifolds, ws);
     } else {
       result = extract_single_dmsc_gpu_t<false>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                                trace_arcs, trace_manifolds);
+                                                trace_arcs, trace_manifolds, ws);
     }
-
     // Cast the single struct to a generic Python object
     return pybind11::cast(result);
   } else {
@@ -467,6 +468,7 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
 
     std::vector<DMSComplex> results;
     results.reserve(B);
+    gpu::Workspace ws;
 
     // Sequentially iterate the batch dimension. (GPU kernels will max out hardware for each spatial grid)
     for (int b = 0; b < B; ++b) {
@@ -474,10 +476,10 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
 
       if (is_dual) {
         results.push_back(extract_single_dmsc_gpu_t<true>(img, persistence_threshold, block_size, return_gradient,
-                                                          trace_arcs, trace_manifolds));
+                                                          trace_arcs, trace_manifolds, ws));
       } else {
         results.push_back(extract_single_dmsc_gpu_t<false>(img, persistence_threshold, block_size, return_gradient,
-                                                           trace_arcs, trace_manifolds));
+                                                           trace_arcs, trace_manifolds, ws));
       }
     }
 

@@ -23,6 +23,7 @@
 #include "./cpu/cell_groups.hxx"
 #include "./cpu/gradient.hxx"
 #include "./cpu/persistence.hxx"
+#include "./cpu/workspace.hxx"
 #include "./dmsc_struct.hxx"
 
 /*
@@ -42,7 +43,7 @@ represent maxima/saddles/minima respectively.
 */
 template <bool IS_DUAL = false>
 DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persistence_threshold, int block_size,
-                                     bool return_gradient, bool trace_arcs, bool trace_manifolds) {
+                                     bool return_gradient, bool trace_arcs, bool trace_manifolds, cpu::Workspace& ws) {
   int H = scalar_field.size(0);
   int W = scalar_field.size(1);
   int Nx = W + 1;
@@ -402,12 +403,13 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
     // int W = scalar_field.size(1);
 
     DMSComplex result;
+    cpu::Workspace ws;
     if (is_dual) {
       result = extract_single_dmsc_cpu_t<true>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                               trace_arcs, trace_manifolds);
+                                               trace_arcs, trace_manifolds, ws);
     } else {
       result = extract_single_dmsc_cpu_t<false>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                                trace_arcs, trace_manifolds);
+                                                trace_arcs, trace_manifolds, ws);
     }
 
     return pybind11::cast(result);
@@ -425,16 +427,17 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
 
     std::vector<DMSComplex> results;
     results.reserve(B);
+    cpu::Workspace ws;
 
     for (int b = 0; b < B; ++b) {
       torch::Tensor img = scalar_field[b];  // Shallow slice wrapper
 
       if (is_dual) {
         results.push_back(extract_single_dmsc_cpu_t<true>(img, persistence_threshold, block_size, return_gradient,
-                                                          trace_arcs, trace_manifolds));
+                                                          trace_arcs, trace_manifolds, ws));
       } else {
         results.push_back(extract_single_dmsc_cpu_t<false>(img, persistence_threshold, block_size, return_gradient,
-                                                           trace_arcs, trace_manifolds));
+                                                           trace_arcs, trace_manifolds, ws));
       }
     }
 
@@ -513,6 +516,6 @@ PYBIND11_MODULE(dmsc_cpu, m) {
   // Only one function exported now!
   m.def("extract_dmsc", &extract_dmsc_cpu, "Multithreaded Discrete Morse-Smale complex computation",
         pybind11::arg("scalar_field"), pybind11::arg("persistence_threshold"), pybind11::arg("block_size") = 128,
-        pybind11::arg("return_gradient") = false, pybind11::arg("is_dual") = false,
-        pybind11::arg("trace_arcs") = false, pybind11::arg("trace_manifolds") = false);
+        pybind11::arg("return_gradient") = false, pybind11::arg("is_dual") = false, pybind11::arg("trace_arcs") = false,
+        pybind11::arg("trace_manifolds") = false);
 }
