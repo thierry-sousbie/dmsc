@@ -190,17 +190,48 @@ void compute_gradient(int total_blocks, int num_blocks_x, int block_size, int H,
   });
 }
 
-template <bool IS_DUAL>
-GradientData compute_gradient_and_crit_points(const torch::Tensor scalar_field, int total_blocks, int num_blocks_x,
-                                              int block_size) {
-  int H = scalar_field.size(0);
-  int W = scalar_field.size(1);
-  int Nx = W + 1;
-  const float* data = scalar_field.data_ptr<float>();
+template <bool IS_DUAL, typename Workspace, typename scalar_t = float>
+void update_helpers(Workspace& ws, const scalar_t* data) {
+  int H = ws.H;
+  int W = ws.W;
+  int Nx = ws.Nx;
+  const auto& cp = ws.gradient_data.cp;
+  auto& fast_crit_map = ws.hlp.fast_crit_map;
+  auto& crit_max_vals = ws.hlp.crit_max_vals;
+  auto& crit_min_vals = ws.hlp.crit_min_vals;
 
-  GradientData gd;
+  RECORD_FUNCTION("helpers_fast_crit_map", {});
+  fast_crit_map.assign(ws.num_cells, -1);
+  crit_min_vals.resize(cp.mins.size());
+  crit_max_vals.resize(cp.maxes.size());
 
-  compute_gradient<IS_DUAL>(total_blocks, num_blocks_x, block_size, H, W, Nx, data, gd.paired_with);
-  extract_critical_points(gd.paired_with, H, W, Nx, gd.cp.mins, gd.cp.saddles, gd.cp.maxes);
-  return gd;
+  tbb::parallel_invoke(
+      [&]() {
+        for (size_t i = 0; i < cp.maxes.size(); ++i) {
+          fast_crit_map[cp.maxes[i]] = i;
+          crit_max_vals[i] = cell_value<IS_DUAL>(3, get_y(cp.maxes[i], Nx), get_x(cp.maxes[i], Nx), H, W, data);
+        }
+      },
+      [&]() {
+        for (size_t i = 0; i < cp.mins.size(); ++i) {
+          fast_crit_map[cp.mins[i]] = i;
+          crit_min_vals[i] = cell_value<IS_DUAL>(0, get_y(cp.mins[i], Nx), get_x(cp.mins[i], Nx), H, W, data);
+        }
+      },
+      [&]() {
+        for (size_t i = 0; i < cp.saddles.size(); ++i) {
+          fast_crit_map[cp.saddles[i]] = i;
+        }
+      });
+}
+
+template <bool IS_DUAL, typename Workspace, typename scalar_t = float>
+void compute_gradient_and_crit_points(Workspace& ws, const torch::Tensor& scalar_field, int total_blocks,
+                                      int num_blocks_x, int block_size) {
+  const scalar_t* data = scalar_field.data_ptr<scalar_t>();
+  GradientData& gd = ws.gradient_data;
+
+  compute_gradient<IS_DUAL>(total_blocks, num_blocks_x, block_size, ws.H, ws.W, ws.Nx, data, gd.paired_with);
+  extract_critical_points(gd.paired_with, ws.H, ws.W, ws.Nx, gd.cp.mins, gd.cp.saddles, gd.cp.maxes);
+  update_helpers<IS_DUAL>(ws, data);
 }

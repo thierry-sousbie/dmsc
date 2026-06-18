@@ -44,11 +44,11 @@ represent maxima/saddles/minima respectively.
 template <bool IS_DUAL = false>
 DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persistence_threshold, int block_size,
                                      bool return_gradient, bool trace_arcs, bool trace_manifolds, cpu::Workspace& ws) {
-  int H = scalar_field.size(0);
-  int W = scalar_field.size(1);
-  int Nx = W + 1;
-  int num_cells = 4 * (H + 1) * (W + 1);
-  const float* data = scalar_field.data_ptr<float>();
+  int H = ws.H;
+  int W = ws.W;
+  int Nx = ws.Nx;
+  int num_cells = ws.num_cells;
+  ws.reset();
 
   tbb::global_control control(tbb::global_control::max_allowed_parallelism, at::get_num_threads());
 
@@ -56,71 +56,24 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
   int num_blocks_x = (W + block_size - 1) / block_size;
   int total_blocks = num_blocks_y * num_blocks_x;
 
-  auto gradient_data = compute_gradient_and_crit_points<IS_DUAL>(scalar_field, total_blocks, num_blocks_x, block_size);
-  // We could move because using a reference seems to slow the compiler optimization a bit later on
-  // but this is meant to be removed after clean up anyways ...
-  std::vector<int>& paired_with = gradient_data.paired_with;
-  std::vector<int>& crit_saddles = gradient_data.cp.saddles;
-  std::vector<int>& crit_mins = gradient_data.cp.mins;
-  std::vector<int>& crit_maxes = gradient_data.cp.maxes;
+  compute_gradient_and_crit_points<IS_DUAL>(ws, scalar_field, total_blocks, num_blocks_x, block_size);
+  trace_from_saddles<IS_DUAL>(ws, scalar_field);
 
-  // --- PATH TRACING ---
-  auto arcs_topology = trace_from_saddles<IS_DUAL>(data, gradient_data, H, W, Nx);
-  std::vector<SadEvent> max_saddles = std::move(arcs_topology.sorted_max_saddles);
-  std::vector<SadEvent> min_saddles = std::move(arcs_topology.sorted_min_saddles);
-
-  // Pre-calculate mappings for faster access
-  std::vector<float> crit_min_vals(crit_mins.size());
-  std::vector<float> crit_maxes_vals(crit_maxes.size());
-  std::vector<int> fast_crit_map(num_cells, -1);
-  {
-    RECORD_FUNCTION("persistence_preproc_cpu1", {});
-    tbb::parallel_invoke(
-        [&]() {
-          for (size_t i = 0; i < crit_maxes.size(); ++i) {
-            fast_crit_map[crit_maxes[i]] = i;
-            crit_maxes_vals[i] = cell_value<IS_DUAL>(3, get_y(crit_maxes[i], Nx), get_x(crit_maxes[i], Nx), H, W, data);
-          }
-        },
-        [&]() {
-          for (size_t i = 0; i < crit_mins.size(); ++i) {
-            fast_crit_map[crit_mins[i]] = i;
-            crit_min_vals[i] = cell_value<IS_DUAL>(0, get_y(crit_mins[i], Nx), get_x(crit_mins[i], Nx), H, W, data);
-          }
-        },
-        [&]() {
-          for (size_t i = 0; i < crit_saddles.size(); ++i) {
-            fast_crit_map[crit_saddles[i]] = i;
-          }
-        });
-  }
-  {
-    RECORD_FUNCTION("persistence_preproc_cpu2", {});
-    // localize the mapping to the structure for cache, making the persistence thresholding loop faster
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, min_saddles.size(), 1024),
-                      [&](const tbb::blocked_range<size_t>& r) {
-                        for (size_t i = r.begin(); i != r.end(); ++i) {
-                          auto& ev = min_saddles[i];
-                          ev.c1_mid = (ev.c1_id != -1) ? fast_crit_map[ev.c1_id] : -1;
-                          ev.c2_mid = (ev.c2_id != -1) ? fast_crit_map[ev.c2_id] : -1;
-                        }
-                      });
-
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, max_saddles.size(), 1024),
-                      [&](const tbb::blocked_range<size_t>& r) {
-                        for (size_t i = r.begin(); i != r.end(); ++i) {
-                          auto& ev = max_saddles[i];
-                          ev.c1_mid = (ev.c1_id != -1) ? fast_crit_map[ev.c1_id] : -1;
-                          ev.c2_mid = (ev.c2_id != -1) ? fast_crit_map[ev.c2_id] : -1;
-                        }
-                      });
-  }
+  auto& paired_with = ws.gradient_data.paired_with;
+  auto& crit_saddles = ws.gradient_data.cp.saddles;
+  auto& crit_mins = ws.gradient_data.cp.mins;
+  auto& crit_maxes = ws.gradient_data.cp.maxes;
+  auto& max_saddles = ws.arcs_topology.sorted_max_saddles;
+  auto& min_saddles = ws.arcs_topology.sorted_min_saddles;
+  auto& fast_crit_map = ws.hlp.fast_crit_map;
+  auto& crit_max_vals = ws.hlp.crit_max_vals;
+  auto& crit_min_vals = ws.hlp.crit_min_vals;
 
   // arcs geometry computation (ridges and valleys)
   SaddleNodes saddle_nodes;  // arcs incident to saddle points
   if (trace_arcs) {
-    saddle_nodes = trace_raw_arcs_geometry(gradient_data, fast_crit_map, arcs_topology.max_arcs_len,
-                                           arcs_topology.min_arcs_len, H, W, Nx);
+    saddle_nodes = trace_raw_arcs_geometry(ws.gradient_data, fast_crit_map, ws.arcs_topology.max_arcs_len,
+                                           ws.arcs_topology.min_arcs_len, H, W, Nx);
   }
 
   UnionFind uf_max(crit_maxes.size());
@@ -133,53 +86,52 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
   std::vector<CancelEvent> max_cancellations;
 
   compute_ppairs_and_simplify<IS_DUAL>(persistence_threshold, trace_arcs, fast_crit_map, min_saddles, max_saddles,
-                                       crit_mins, crit_maxes, crit_min_vals, crit_maxes_vals, min_alive, max_alive,
+                                       crit_mins, crit_maxes, crit_min_vals, crit_max_vals, min_alive, max_alive,
                                        uf_min, uf_max, min_cancellations, max_cancellations);
 
   // --- 1-manifolds graph ---
+  std::vector<int> ridge_faces, ridge_vertices;
+  std::vector<int> ridge_faces_offsets = {0}, ridge_vertices_offsets = {0};
+  std::vector<int> arc_faces_offsets, arc_vertices_offsets;
   if (trace_arcs) {
     simplify_arcs_geometry(saddle_nodes, crit_maxes.size(), crit_mins.size(), min_cancellations, max_cancellations);
+    {
+      RECORD_FUNCTION("populate_ridges_and_valleys_cpu", {});
+
+      // FIX: Extract raw pointers from the Tensors to use as C++ iterators
+      const int* flat_max_ptr = saddle_nodes.flat_max_geom.data_ptr<int>();
+      const int* flat_min_ptr = saddle_nodes.flat_min_geom.data_ptr<int>();
+
+      for (const auto& ev : min_saddles) {
+        int s_idx = fast_crit_map[ev.saddle_id];
+        const auto& node = saddle_nodes.saddle_nodes[s_idx];
+
+        if (!node.alive) continue;  // Safety check
+
+        const int* max_arc0_start = flat_max_ptr + node.max_arcs[0].offset;
+        ridge_faces.insert(ridge_faces.end(), max_arc0_start, max_arc0_start + node.max_arcs[0].length);
+        arc_faces_offsets.push_back(ridge_faces.size());
+
+        const int* max_arc1_start = flat_max_ptr + node.max_arcs[1].offset;
+        ridge_faces.insert(ridge_faces.end(), max_arc1_start, max_arc1_start + node.max_arcs[1].length);
+        ridge_faces_offsets.push_back(ridge_faces.size());
+
+        const int* min_arc0_start = flat_min_ptr + node.min_arcs[0].offset;
+        ridge_vertices.insert(ridge_vertices.end(), min_arc0_start, min_arc0_start + node.min_arcs[0].length);
+        arc_vertices_offsets.push_back(ridge_vertices.size());
+
+        const int* min_arc1_start = flat_min_ptr + node.min_arcs[1].offset;
+        ridge_vertices.insert(ridge_vertices.end(), min_arc1_start, min_arc1_start + node.min_arcs[1].length);
+        ridge_vertices_offsets.push_back(ridge_vertices.size());
+      }
+    }
   }
+
   // --- Compute basins of attraction ---
   CellGroupsData cell_groups;
   if (trace_manifolds)
     cell_groups = compute_cell_groups(paired_with, fast_crit_map, uf_max, crit_maxes, uf_min, crit_mins, max_alive,
                                       min_alive, H, W);
-
-  std::vector<int> ridge_faces, ridge_vertices;
-  std::vector<int> ridge_faces_offsets = {0}, ridge_vertices_offsets = {0};
-  std::vector<int> arc_faces_offsets, arc_vertices_offsets;
-
-  if (trace_arcs) {
-    RECORD_FUNCTION("populate_ridges_and_valleys_cpu", {});
-
-    // FIX: Extract raw pointers from the Tensors to use as C++ iterators
-    const int* flat_max_ptr = saddle_nodes.flat_max_geom.data_ptr<int>();
-    const int* flat_min_ptr = saddle_nodes.flat_min_geom.data_ptr<int>();
-
-    for (const auto& ev : min_saddles) {
-      int s_idx = fast_crit_map[ev.saddle_id];
-      const auto& node = saddle_nodes.saddle_nodes[s_idx];
-
-      if (!node.alive) continue;  // Safety check
-
-      const int* max_arc0_start = flat_max_ptr + node.max_arcs[0].offset;
-      ridge_faces.insert(ridge_faces.end(), max_arc0_start, max_arc0_start + node.max_arcs[0].length);
-      arc_faces_offsets.push_back(ridge_faces.size());
-
-      const int* max_arc1_start = flat_max_ptr + node.max_arcs[1].offset;
-      ridge_faces.insert(ridge_faces.end(), max_arc1_start, max_arc1_start + node.max_arcs[1].length);
-      ridge_faces_offsets.push_back(ridge_faces.size());
-
-      const int* min_arc0_start = flat_min_ptr + node.min_arcs[0].offset;
-      ridge_vertices.insert(ridge_vertices.end(), min_arc0_start, min_arc0_start + node.min_arcs[0].length);
-      arc_vertices_offsets.push_back(ridge_vertices.size());
-
-      const int* min_arc1_start = flat_min_ptr + node.min_arcs[1].offset;
-      ridge_vertices.insert(ridge_vertices.end(), min_arc1_start, min_arc1_start + node.min_arcs[1].length);
-      ridge_vertices_offsets.push_back(ridge_vertices.size());
-    }
-  }
 
   // --- Generate formatted ouptut data ---
   std::vector<int> final_maxes, final_mins, final_sads;
@@ -399,11 +351,11 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
   scalar_field = scalar_field.contiguous();
 
   if (scalar_field.dim() == 2) {
-    // int H = scalar_field.size(0);
-    // int W = scalar_field.size(1);
+    int H = scalar_field.size(0);
+    int W = scalar_field.size(1);
 
     DMSComplex result;
-    cpu::Workspace ws;
+    cpu::Workspace ws(H, W);
     if (is_dual) {
       result = extract_single_dmsc_cpu_t<true>(scalar_field, persistence_threshold, block_size, return_gradient,
                                                trace_arcs, trace_manifolds, ws);
@@ -419,25 +371,20 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
     int B = scalar_field.size(0);
     int H = scalar_field.size(1);
     int W = scalar_field.size(2);
-    int num_cells = 4 * (H + 1) * (W + 1);
-
-    // Workspace Pool: Allocated exactly once for the entire batch
-    std::vector<int> fast_crit_map(num_cells);
-    std::vector<int> fast_region_id(num_cells);
 
     std::vector<DMSComplex> results;
     results.reserve(B);
-    cpu::Workspace ws;
+    cpu::Workspace ws(H, W);
 
     for (int b = 0; b < B; ++b) {
-      torch::Tensor img = scalar_field[b];  // Shallow slice wrapper
+      // torch::Tensor img = scalar_field[b];  // Shallow slice wrapper
 
       if (is_dual) {
-        results.push_back(extract_single_dmsc_cpu_t<true>(img, persistence_threshold, block_size, return_gradient,
-                                                          trace_arcs, trace_manifolds, ws));
+        results.push_back(extract_single_dmsc_cpu_t<true>(scalar_field[b], persistence_threshold, block_size,
+                                                          return_gradient, trace_arcs, trace_manifolds, ws));
       } else {
-        results.push_back(extract_single_dmsc_cpu_t<false>(img, persistence_threshold, block_size, return_gradient,
-                                                           trace_arcs, trace_manifolds, ws));
+        results.push_back(extract_single_dmsc_cpu_t<false>(scalar_field[b], persistence_threshold, block_size,
+                                                           return_gradient, trace_arcs, trace_manifolds, ws));
       }
     }
 
