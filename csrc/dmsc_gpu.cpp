@@ -65,8 +65,8 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
 
   // --- DISCRETE GRADIENT ---
   torch::Tensor active_field = scalar_field;
-  auto gradient_data = gpu::compute_gradient<IS_DUAL>(active_field);
-
+  gpu::compute_gradient<IS_DUAL>(ws, active_field);
+  auto& gradient_data = ws.gradient_data;
   // --- PATH TRACING ---
   // We could move because using a reference seems to slow the compiler optimization a bit later on
   // but this is meant to be removed after clean up anyways ...
@@ -134,10 +134,11 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
   }
 
   // arcs geometry computation (ridges and valleys)
-  SaddleNodes saddle_nodes;  // arcs incident to saddle points
+  // SaddleNodes saddle_nodes;  // arcs incident to saddle points
+  auto& saddle_nodes = ws.saddle_nodes;
   if (trace_arcs) {
-    saddle_nodes = gpu::trace_raw_arcs_geometry(gradient_data, fast_crit_map.data(), arcs_topology.max_arcs_len,
-                                                arcs_topology.min_arcs_len);
+    gpu::trace_raw_arcs_geometry(ws, gradient_data, fast_crit_map.data(), arcs_topology.max_arcs_len,
+                                 arcs_topology.min_arcs_len);
   }
 
   UnionFind uf_max(crit_maxes.size());
@@ -153,7 +154,9 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
 
   // --- 1-manifolds graph ---
   if (trace_arcs) {
-    simplify_arcs_geometry(saddle_nodes, crit_maxes.size(), crit_mins.size(), min_cancellations, max_cancellations);
+    // simplify_arcs_geometry(ws, saddle_nodes, crit_maxes.size(), crit_mins.size(), min_cancellations,
+    // max_cancellations);
+    ::simplify_arcs_geometry(ws, min_cancellations, max_cancellations);
   }
 
   // --- Compute basins of attraction ---
@@ -198,13 +201,15 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
   if (trace_arcs) {
     RECORD_FUNCTION("populate_ridges_and_valleys_cpu", {});
 
-    // FIX: Extract raw pointers from the Tensors to use as C++ iterators
-    const int* flat_max_ptr = saddle_nodes.flat_max_geom.data_ptr<int>();
-    const int* flat_min_ptr = saddle_nodes.flat_min_geom.data_ptr<int>();
+    auto flat_max_geom = saddle_nodes.flat_max_geom.get();
+    auto flat_min_geom = saddle_nodes.flat_min_geom.get();
+
+    const int* flat_max_ptr = flat_max_geom.template data_ptr<int>();
+    const int* flat_min_ptr = flat_min_geom.template data_ptr<int>();
 
     for (const auto& ev : min_saddles) {
       int s_idx = fast_crit_map[ev.saddle_id];
-      const auto& node = saddle_nodes.saddle_nodes[s_idx];
+      const auto& node = saddle_nodes.nodes[s_idx];
 
       if (!node.alive) continue;  // Safety check
 
@@ -444,12 +449,11 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
   scalar_field = scalar_field.contiguous();
 
   if (scalar_field.dim() == 2) {
-    // int H = scalar_field.size(0);
-    // int W = scalar_field.size(1);
-    // int num_cells = 4 * (H + 1) * (W + 1);
+    int H = scalar_field.size(0);
+    int W = scalar_field.size(1);
 
     DMSComplex result;
-    gpu::Workspace ws;
+    gpu::Workspace ws(H, W);
     if (is_dual) {
       result = extract_single_dmsc_gpu_t<true>(scalar_field, persistence_threshold, block_size, return_gradient,
                                                trace_arcs, trace_manifolds, ws);
@@ -462,13 +466,12 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
   } else {
     // 3D Batched case
     int B = scalar_field.size(0);
-    // int H = scalar_field.size(1);
-    // int W = scalar_field.size(2);
-    // int num_cells = 4 * (H + 1) * (W + 1);
+    int H = scalar_field.size(1);
+    int W = scalar_field.size(2);
 
     std::vector<DMSComplex> results;
     results.reserve(B);
-    gpu::Workspace ws;
+    gpu::Workspace ws(H, W);
 
     // Sequentially iterate the batch dimension. (GPU kernels will max out hardware for each spatial grid)
     for (int b = 0; b < B; ++b) {

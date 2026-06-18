@@ -34,8 +34,8 @@ struct PathRef {
 };
 
 // This is templated because we ll use different structures for metal because of alignment
-template <typename NodeType = DAGNode, typename RefType = PathRef>
-void assemble_simplified_geometry(SaddleNodes& sn, const std::vector<uint8_t>& max_alive,
+template <typename NodeType, typename RefType, typename Workspace>
+void assemble_simplified_geometry(Workspace& ws, SaddleNodes& sn, const std::vector<uint8_t>& max_alive,
                                   const std::vector<uint8_t>& min_alive, const std::vector<int>& init_t_max,
                                   const std::vector<int>& init_t_min, const std::vector<int>& base_max_len,
                                   const std::vector<int>& base_min_len, const std::vector<int>& base_max_offset,
@@ -45,7 +45,7 @@ void assemble_simplified_geometry(SaddleNodes& sn, const std::vector<uint8_t>& m
                                   int& max_dag_sz, std::vector<NodeType>& min_dag, int& min_dag_sz) {
   RECORD_FUNCTION("assemble_simplified_geometry", {});
 
-  int num_saddles = sn.saddle_nodes.size();
+  int num_saddles = sn.nodes.size();
   int N2 = num_saddles * 2;
 
   const int* p_max_parent = max_parent.data();
@@ -138,13 +138,18 @@ void assemble_simplified_geometry(SaddleNodes& sn, const std::vector<uint8_t>& m
   }
 
   auto cpu_int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
-  torch::Tensor new_flat_max = torch::empty({(long)final_max_offset.back()}, cpu_int_opts);
-  torch::Tensor new_flat_min = torch::empty({(long)final_min_offset.back()}, cpu_int_opts);
+  // torch::Tensor new_flat_max = torch::empty({(long)final_max_offset.back()}, cpu_int_opts);
+  // torch::Tensor new_flat_min = torch::empty({(long)final_min_offset.back()}, cpu_int_opts);
 
-  int* out_max_ptr = new_flat_max.data_ptr<int>();
-  int* out_min_ptr = new_flat_min.data_ptr<int>();
-  const int* old_max_ptr = sn.flat_max_geom.data_ptr<int>();
-  const int* old_min_ptr = sn.flat_min_geom.data_ptr<int>();
+  auto new_flat_max_geom = ws.hlp.temp_flat_max.request({(long)final_max_offset.back()}, cpu_int_opts);
+  auto new_flat_min_geom = ws.hlp.temp_flat_min.request({(long)final_min_offset.back()}, cpu_int_opts);
+
+  int* out_max_ptr = new_flat_max_geom.template data_ptr<int>();
+  int* out_min_ptr = new_flat_min_geom.template data_ptr<int>();
+  auto flat_max_geom = sn.flat_max_geom.get();
+  auto flat_min_geom = sn.flat_min_geom.get();
+  const int* old_max_ptr = flat_max_geom.template data_ptr<int>();
+  const int* old_min_ptr = flat_min_geom.template data_ptr<int>();
 
   struct StackItem {
     int id;
@@ -194,48 +199,48 @@ void assemble_simplified_geometry(SaddleNodes& sn, const std::vector<uint8_t>& m
       for (int64_t i = start; i < end; ++i) {
         int idx = static_cast<int>(i);
         auto globally_alive = max_alive[idx] && min_alive[idx];
-        sn.saddle_nodes[idx].alive = globally_alive;
+        sn.nodes[idx].alive = globally_alive;
 
         if (!globally_alive) {
-          sn.saddle_nodes[idx].max_arcs[0].length = 0;
-          sn.saddle_nodes[idx].max_arcs[1].length = 0;
-          sn.saddle_nodes[idx].min_arcs[0].length = 0;
-          sn.saddle_nodes[idx].min_arcs[1].length = 0;
+          sn.nodes[idx].max_arcs[0].length = 0;
+          sn.nodes[idx].max_arcs[1].length = 0;
+          sn.nodes[idx].min_arcs[0].length = 0;
+          sn.nodes[idx].min_arcs[1].length = 0;
           continue;
         }
 
         int TM0 = init_t_max[2 * idx];
         if (TM0 != -1) {
-          sn.saddle_nodes[idx].max_arcs[0].target = p_max_parent[TM0];
-          sn.saddle_nodes[idx].max_arcs[0].offset = final_max_offset[2 * idx];
-          sn.saddle_nodes[idx].max_arcs[0].length = final_max_len[2 * idx];
+          sn.nodes[idx].max_arcs[0].target = p_max_parent[TM0];
+          sn.nodes[idx].max_arcs[0].offset = final_max_offset[2 * idx];
+          sn.nodes[idx].max_arcs[0].length = final_max_len[2 * idx];
           WriteGeomFlat(final_max_path[2 * idx], out_max_ptr, final_max_offset[2 * idx], p_max_dag, old_max_ptr,
                         base_max_offset.data(), p_base_max_len);
         }
 
         int TM1 = init_t_max[2 * idx + 1];
         if (TM1 != -1) {
-          sn.saddle_nodes[idx].max_arcs[1].target = p_max_parent[TM1];
-          sn.saddle_nodes[idx].max_arcs[1].offset = final_max_offset[2 * idx + 1];
-          sn.saddle_nodes[idx].max_arcs[1].length = final_max_len[2 * idx + 1];
+          sn.nodes[idx].max_arcs[1].target = p_max_parent[TM1];
+          sn.nodes[idx].max_arcs[1].offset = final_max_offset[2 * idx + 1];
+          sn.nodes[idx].max_arcs[1].length = final_max_len[2 * idx + 1];
           WriteGeomFlat(final_max_path[2 * idx + 1], out_max_ptr, final_max_offset[2 * idx + 1], p_max_dag, old_max_ptr,
                         base_max_offset.data(), p_base_max_len);
         }
 
         int TN0 = init_t_min[2 * idx];
         if (TN0 != -1) {
-          sn.saddle_nodes[idx].min_arcs[0].target = p_min_parent[TN0];
-          sn.saddle_nodes[idx].min_arcs[0].offset = final_min_offset[2 * idx];
-          sn.saddle_nodes[idx].min_arcs[0].length = final_min_len[2 * idx];
+          sn.nodes[idx].min_arcs[0].target = p_min_parent[TN0];
+          sn.nodes[idx].min_arcs[0].offset = final_min_offset[2 * idx];
+          sn.nodes[idx].min_arcs[0].length = final_min_len[2 * idx];
           WriteGeomFlat(final_min_path[2 * idx], out_min_ptr, final_min_offset[2 * idx], p_min_dag, old_min_ptr,
                         base_min_offset.data(), p_base_min_len);
         }
 
         int TN1 = init_t_min[2 * idx + 1];
         if (TN1 != -1) {
-          sn.saddle_nodes[idx].min_arcs[1].target = p_min_parent[TN1];
-          sn.saddle_nodes[idx].min_arcs[1].offset = final_min_offset[2 * idx + 1];
-          sn.saddle_nodes[idx].min_arcs[1].length = final_min_len[2 * idx + 1];
+          sn.nodes[idx].min_arcs[1].target = p_min_parent[TN1];
+          sn.nodes[idx].min_arcs[1].offset = final_min_offset[2 * idx + 1];
+          sn.nodes[idx].min_arcs[1].length = final_min_len[2 * idx + 1];
           WriteGeomFlat(final_min_path[2 * idx + 1], out_min_ptr, final_min_offset[2 * idx + 1], p_min_dag, old_min_ptr,
                         base_min_offset.data(), p_base_min_len);
         }
@@ -243,16 +248,19 @@ void assemble_simplified_geometry(SaddleNodes& sn, const std::vector<uint8_t>& m
     });
   }
 
-  sn.flat_max_geom = new_flat_max;
-  sn.flat_min_geom = new_flat_min;
+  sn.flat_max_geom.copy_from_tensor(new_flat_max_geom);
+  sn.flat_min_geom.copy_from_tensor(new_flat_min_geom);
 }
 
-void simplify_arcs_geometry(SaddleNodes& sn, int num_crit_maxes, int num_crit_mins,
-                            std::vector<CancelEvent>& min_cancellations, std::vector<CancelEvent>& max_cancellations) {
+template <typename Workspace>
+void simplify_arcs_geometry(Workspace& ws, std::vector<CancelEvent>& min_cancellations,
+                            std::vector<CancelEvent>& max_cancellations) {
   RECORD_FUNCTION("simplify_arcs_geometry_flat", {});
-
-  int num_saddles = sn.saddle_nodes.size();
+  auto& sn = ws.saddle_nodes;
+  int num_saddles = sn.nodes.size();
   int N2 = num_saddles * 2;
+  int num_crit_maxes = ws.gradient_data.cp.maxes.size();
+  int num_crit_mins = ws.gradient_data.cp.mins.size();
 
   std::vector<int> max_parent(num_crit_maxes), min_parent(num_crit_mins);
   std::vector<PathRef> max_weight(num_crit_maxes, {-1, true}), min_weight(num_crit_mins, {-1, true});
@@ -281,20 +289,20 @@ void simplify_arcs_geometry(SaddleNodes& sn, int num_crit_maxes, int num_crit_mi
     at::parallel_for(0, num_saddles, 1024, [&](int64_t start, int64_t end) {
       for (int64_t i = start; i < end; ++i) {
         int idx = static_cast<int>(i);
-        init_t_max[2 * idx] = sn.saddle_nodes[idx].max_arcs[0].target;
-        init_t_max[2 * idx + 1] = sn.saddle_nodes[idx].max_arcs[1].target;
-        init_t_min[2 * idx] = sn.saddle_nodes[idx].min_arcs[0].target;
-        init_t_min[2 * idx + 1] = sn.saddle_nodes[idx].min_arcs[1].target;
+        init_t_max[2 * idx] = sn.nodes[idx].max_arcs[0].target;
+        init_t_max[2 * idx + 1] = sn.nodes[idx].max_arcs[1].target;
+        init_t_min[2 * idx] = sn.nodes[idx].min_arcs[0].target;
+        init_t_min[2 * idx + 1] = sn.nodes[idx].min_arcs[1].target;
 
-        base_max_len[2 * idx] = sn.saddle_nodes[idx].max_arcs[0].length;
-        base_max_len[2 * idx + 1] = sn.saddle_nodes[idx].max_arcs[1].length;
-        base_max_offset[2 * idx] = sn.saddle_nodes[idx].max_arcs[0].offset;
-        base_max_offset[2 * idx + 1] = sn.saddle_nodes[idx].max_arcs[1].offset;
+        base_max_len[2 * idx] = sn.nodes[idx].max_arcs[0].length;
+        base_max_len[2 * idx + 1] = sn.nodes[idx].max_arcs[1].length;
+        base_max_offset[2 * idx] = sn.nodes[idx].max_arcs[0].offset;
+        base_max_offset[2 * idx + 1] = sn.nodes[idx].max_arcs[1].offset;
 
-        base_min_len[2 * idx] = sn.saddle_nodes[idx].min_arcs[0].length;
-        base_min_len[2 * idx + 1] = sn.saddle_nodes[idx].min_arcs[1].length;
-        base_min_offset[2 * idx] = sn.saddle_nodes[idx].min_arcs[0].offset;
-        base_min_offset[2 * idx + 1] = sn.saddle_nodes[idx].min_arcs[1].offset;
+        base_min_len[2 * idx] = sn.nodes[idx].min_arcs[0].length;
+        base_min_len[2 * idx + 1] = sn.nodes[idx].min_arcs[1].length;
+        base_min_offset[2 * idx] = sn.nodes[idx].min_arcs[0].offset;
+        base_min_offset[2 * idx + 1] = sn.nodes[idx].min_arcs[1].offset;
       }
     });
   }
@@ -423,7 +431,7 @@ void simplify_arcs_geometry(SaddleNodes& sn, int num_crit_maxes, int num_crit_mi
   }
 
   // Delegate the final memory assembly phase so we can reuse the code on GPU
-  assemble_simplified_geometry(sn, max_alive, min_alive, init_t_max, init_t_min, base_max_len, base_min_len,
-                               base_max_offset, base_min_offset, max_parent, min_parent, max_weight, min_weight,
-                               max_dag, max_dag_sz, min_dag, min_dag_sz);
+  assemble_simplified_geometry<DAGNode, PathRef>(ws, sn, max_alive, min_alive, init_t_max, init_t_min, base_max_len,
+                                                 base_min_len, base_max_offset, base_min_offset, max_parent, min_parent,
+                                                 max_weight, min_weight, max_dag, max_dag_sz, min_dag, min_dag_sz);
 }

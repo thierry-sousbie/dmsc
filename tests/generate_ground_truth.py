@@ -1,10 +1,11 @@
 import os
-import torch
-import numpy as np
 
-# Adjust imports to match project structure
+import numpy as np
+import torch
+
 from csrc.dmsc import compute_dmsc
 from test_dmsc import generate_noisy_landscape
+
 
 def save_ground_truth():
     seed = 1780627675
@@ -17,11 +18,7 @@ def save_ground_truth():
     os.makedirs("tests/data", exist_ok=True)
     torch.save(img, "tests/data/landscape_32x32.pt")
 
-    configs = [
-        ("st", "cpu", 1),
-        ("mt", "cpu", 8),
-        ("gpu", "mps" if torch.backends.mps.is_available() else "cuda", 8)
-    ]
+    configs = [("st", "cpu", 1), ("mt", "cpu", 8), ("gpu", "mps" if torch.backends.mps.is_available() else "cuda", 8)]
 
     for mode, device_str, threads in configs:
         torch.set_num_threads(threads)
@@ -30,13 +27,13 @@ def save_ground_truth():
 
         for is_dual in [False, True]:
             dual_str = "dual" if is_dual else "primal"
-            
+
             # Raw
             ms_raw = compute_dmsc(img_dev, -1.0, return_gradient=True, is_dual=is_dual, block_size=32)
-            
+
             # Simplified
             ms_flt = compute_dmsc(img_dev, 0.15, return_gradient=True, is_dual=is_dual, block_size=32)
-            
+
             # Extract attributes to dict to save
             def ms_to_dict(ms):
                 return {
@@ -57,11 +54,12 @@ def save_ground_truth():
                     "valleys": ms.valleys.cpu(),
                     "valley_offsets": ms.valley_offsets.cpu(),
                 }
-            
+
             torch.save(ms_to_dict(ms_raw), f"tests/data/ms_{mode}_{dual_str}_raw.pt")
             torch.save(ms_to_dict(ms_flt), f"tests/data/ms_{mode}_{dual_str}_flt.pt")
 
     print("Ground truth generation complete.")
+
 
 if __name__ == "__main__":
     save_ground_truth()

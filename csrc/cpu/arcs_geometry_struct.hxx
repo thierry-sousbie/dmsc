@@ -4,6 +4,8 @@
 
 #include <vector>
 
+#include "../managed_tensor.hxx"
+
 struct Arc {
   int target;  // index of the connected max/min
   int offset;  // starting index in the flat geometry array
@@ -18,9 +20,13 @@ struct SaddleNode {
 };
 
 struct SaddleNodes {
-  std::vector<SaddleNode> saddle_nodes;
-  torch::Tensor flat_max_geom;
-  torch::Tensor flat_min_geom;
+  std::vector<SaddleNode> nodes;
+  ManagedTensor flat_max_geom;
+  ManagedTensor flat_min_geom;
+
+  void reset() {
+    nodes.clear();
+  }
 };
 
 // Priority Queue Event for Physical Simplification

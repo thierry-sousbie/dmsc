@@ -18,7 +18,6 @@
 
 #include "./cpu/arcs_geometry.hxx"
 #include "./cpu/arcs_simplification.hxx"
-#include "./cpu/arcs_simplification_test.hxx"
 #include "./cpu/arcs_topology.hxx"
 #include "./cpu/cell_groups.hxx"
 #include "./cpu/gradient.hxx"
@@ -46,7 +45,6 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
                                      bool return_gradient, bool trace_arcs, bool trace_manifolds, cpu::Workspace& ws) {
   int H = ws.H;
   int W = ws.W;
-  int Nx = ws.Nx;
   int num_cells = ws.num_cells;
   ws.reset();
 
@@ -68,13 +66,10 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
   auto& fast_crit_map = ws.hlp.fast_crit_map;
   auto& crit_max_vals = ws.hlp.crit_max_vals;
   auto& crit_min_vals = ws.hlp.crit_min_vals;
+  auto& saddle_nodes = ws.saddle_nodes;
 
   // arcs geometry computation (ridges and valleys)
-  SaddleNodes saddle_nodes;  // arcs incident to saddle points
-  if (trace_arcs) {
-    saddle_nodes = trace_raw_arcs_geometry(ws.gradient_data, fast_crit_map, ws.arcs_topology.max_arcs_len,
-                                           ws.arcs_topology.min_arcs_len, H, W, Nx);
-  }
+  if (trace_arcs) trace_raw_arcs_geometry(ws);
 
   UnionFind uf_max(crit_maxes.size());
   UnionFind uf_min(crit_mins.size());
@@ -94,17 +89,19 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
   std::vector<int> ridge_faces_offsets = {0}, ridge_vertices_offsets = {0};
   std::vector<int> arc_faces_offsets, arc_vertices_offsets;
   if (trace_arcs) {
-    simplify_arcs_geometry(saddle_nodes, crit_maxes.size(), crit_mins.size(), min_cancellations, max_cancellations);
+    simplify_arcs_geometry(ws, min_cancellations, max_cancellations);
     {
       RECORD_FUNCTION("populate_ridges_and_valleys_cpu", {});
 
-      // FIX: Extract raw pointers from the Tensors to use as C++ iterators
-      const int* flat_max_ptr = saddle_nodes.flat_max_geom.data_ptr<int>();
-      const int* flat_min_ptr = saddle_nodes.flat_min_geom.data_ptr<int>();
+      auto flat_max_geom = saddle_nodes.flat_max_geom.get();
+      auto flat_min_geom = saddle_nodes.flat_min_geom.get();
+
+      const int* flat_max_ptr = flat_max_geom.template data_ptr<int>();
+      const int* flat_min_ptr = flat_min_geom.template data_ptr<int>();
 
       for (const auto& ev : min_saddles) {
         int s_idx = fast_crit_map[ev.saddle_id];
-        const auto& node = saddle_nodes.saddle_nodes[s_idx];
+        const auto& node = saddle_nodes.nodes[s_idx];
 
         if (!node.alive) continue;  // Safety check
 

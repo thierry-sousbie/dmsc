@@ -1,11 +1,13 @@
 import os
-import torch
+
 import numpy as np
 import pytest
+import torch
 
 from csrc.dmsc import compute_dmsc
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+
 
 @pytest.fixture(scope="module")
 def landscape():
@@ -52,7 +54,7 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
         if gt_regions is None or gt_regions.numel() == 0:
             assert comp_regions is None or comp_regions.numel() == 0
             return
-            
+
         gt_arr = gt_regions.numpy().flatten()
         comp_arr = comp_regions.cpu().numpy().flatten()
         assert len(gt_arr) == len(comp_arr), f"{name} shape mismatch"
@@ -82,11 +84,10 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
     check_regions(gt_dict["basins"], computed_ms.basins, "Basins")
 
 
-@pytest.mark.parametrize("mode, threads, device_str", [
-    ("st", 1, "cpu"),
-    ("mt", 8, "cpu"),
-    ("gpu", 8, "mps" if torch.backends.mps.is_available() else "cuda")
-])
+@pytest.mark.parametrize(
+    "mode, threads, device_str",
+    [("st", 1, "cpu"), ("mt", 8, "cpu"), ("gpu", 8, "mps" if torch.backends.mps.is_available() else "cuda")],
+)
 @pytest.mark.parametrize("is_dual", [False, True])
 @pytest.mark.parametrize("is_filtered, threshold", [(False, -1.0), (True, 0.15)])
 def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filtered, threshold):
@@ -94,7 +95,7 @@ def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filte
     # The extension will throw an error if the GPU device is missing on this platform
     if device.type == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
-    
+
     img = landscape.to(device)
     torch.set_num_threads(threads)
 
@@ -102,10 +103,10 @@ def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filte
     flt_str = "flt" if is_filtered else "raw"
     gt_filename = f"ms_{mode}_{dual_str}_{flt_str}.pt"
     gt_path = os.path.join(DATA_DIR, gt_filename)
-    
+
     if not os.path.exists(gt_path):
         pytest.fail(f"Ground truth {gt_path} not found.")
-        
+
     gt_dict = torch.load(gt_path, weights_only=False)
 
     # Compute MS complex

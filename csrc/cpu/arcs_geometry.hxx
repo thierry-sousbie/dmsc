@@ -11,23 +11,27 @@
 #include "../cell_complex.hxx"
 #include "./arcs_geometry_struct.hxx"
 
-template <typename GradientData>
-SaddleNodes trace_raw_arcs_geometry(const GradientData& gradient_data, const std::vector<int>& fast_crit_map,
-                                    const std::vector<int>& max_arcs_len, const std::vector<int>& min_arcs_len, int H,
-                                    int W, int Nx) {
+template <typename Workspace>
+SaddleNodes trace_raw_arcs_geometry(Workspace& ws) {
   RECORD_FUNCTION("trace_raw_arcs_geometry_flat", {});
+  int H = ws.H;
+  int W = ws.W;
+  int Nx = ws.Nx;
+  const auto& fast_crit_map = ws.hlp.fast_crit_map;
+  auto& min_arcs_len = ws.arcs_topology.min_arcs_len;
+  auto& max_arcs_len = ws.arcs_topology.max_arcs_len;
+  const auto& gradient_data = ws.gradient_data;
   const auto& paired_with = gradient_data.paired_with;
   const auto& crit_saddles = gradient_data.cp.saddles;
 
-  SaddleNodes out;
+  auto& saddle_nodes = ws.saddle_nodes;
+  // SaddleNodes saddle_nodes;
   int num_saddles = crit_saddles.size();
-  if (num_saddles == 0) return out;
+  if (num_saddles == 0) return saddle_nodes;
 
-  out.saddle_nodes.resize(num_saddles);
+  saddle_nodes.nodes.resize(num_saddles);
 
-  // ==========================================
-  // 1. PREFIX SUM: Calculate Memory Offsets
-  // ==========================================
+  // There are 2 arcs per saddle
   std::vector<int> max_offsets(num_saddles * 2 + 1, 0);
   std::vector<int> min_offsets(num_saddles * 2 + 1, 0);
 
@@ -36,21 +40,17 @@ SaddleNodes trace_raw_arcs_geometry(const GradientData& gradient_data, const std
     min_offsets[i + 1] = min_offsets[i] + min_arcs_len[i] + 1;
   }
 
-  // ==========================================
-  // FIX: Allocate PyTorch Tensors natively on CPU
-  // ==========================================
   auto cpu_int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
-  out.flat_max_geom = torch::empty({(long)max_offsets.back()}, cpu_int_opts);
-  out.flat_min_geom = torch::empty({(long)min_offsets.back()}, cpu_int_opts);
+  auto flat_max_geom = saddle_nodes.flat_max_geom.request({(long)max_offsets.back()}, cpu_int_opts);
+  auto flat_min_geom = saddle_nodes.flat_min_geom.request({(long)min_offsets.back()}, cpu_int_opts);
 
-  // FIX: Extract raw pointers using data_ptr<int>()
-  int* flat_max_ptr = out.flat_max_geom.data_ptr<int>();
-  int* flat_min_ptr = out.flat_min_geom.data_ptr<int>();
-  SaddleNode* nodes_ptr = out.saddle_nodes.data();
+  // saddle_nodes.flat_max_geom = torch::empty({(long)max_offsets.back()}, cpu_int_opts);
+  // saddle_nodes.flat_min_geom = torch::empty({(long)min_offsets.back()}, cpu_int_opts);
 
-  // ==========================================
-  // 2. PARALLEL TRACE: Direct Memory Writes
-  // ==========================================
+  int* flat_max_ptr = flat_max_geom.template data_ptr<int>();
+  int* flat_min_ptr = flat_min_geom.template data_ptr<int>();
+  SaddleNode* nodes_ptr = saddle_nodes.nodes.data();
+
   at::parallel_for(0, num_saddles, 256, [&](int64_t start, int64_t end) {
     for (int64_t i = start; i < end; ++i) {
       nodes_ptr[i].alive = true;
@@ -151,5 +151,5 @@ SaddleNodes trace_raw_arcs_geometry(const GradientData& gradient_data, const std
     }
   });
 
-  return out;
+  return saddle_nodes;
 }
