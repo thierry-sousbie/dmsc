@@ -66,26 +66,11 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
   auto& max_saddles = ws.arcs_topology.sorted_max_saddles;
   auto& min_saddles = ws.arcs_topology.sorted_min_saddles;
   auto& fast_crit_map = ws.hlp.fast_crit_map;
-  // auto& crit_max_vals = ws.hlp.crit_max_vals;
-  // auto& crit_min_vals = ws.hlp.crit_min_vals;
   auto& saddle_nodes = ws.saddle_nodes;
 
   // arcs geometry computation (ridges and valleys)
   if (trace_arcs) trace_raw_arcs_geometry(ws);
 
-  // UnionFind uf_max(crit_maxes.size());
-  // UnionFind uf_min(crit_mins.size());
-
-  // std::vector<bool> max_alive(crit_maxes.size(), true);
-  // std::vector<bool> min_alive(crit_mins.size(), true);
-
-  // std::vector<CancelEvent> min_cancellations;
-  // std::vector<CancelEvent> max_cancellations;
-
-  // compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs, fast_crit_map, min_saddles,
-  // max_saddles,
-  //                                      crit_mins, crit_maxes, crit_min_vals, crit_max_vals, min_alive, max_alive,
-  //                                      uf_min, uf_max, min_cancellations, max_cancellations);
   compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs);
   auto& min_alive = ws.p_data.min_alive;
   auto& max_alive = ws.p_data.max_alive;
