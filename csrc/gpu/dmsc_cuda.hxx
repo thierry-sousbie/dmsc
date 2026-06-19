@@ -78,71 +78,106 @@ void compute_gradient(Workspace& ws, torch::Tensor& active_field) {
       torch::from_blob((void*)cp.saddles.data(), {(long)cp.saddles.size()}, opts.device(torch::kCPU))
           .to(active_field.device());
 
+  // Copy paired_with back to CPU (Needed for Phase 3 simplification)
   torch::Tensor cpu_paired = d_paired_with.cpu();
+  std::vector<int> paired_with(num_cells);
   std::memcpy(paired_with.data(), cpu_paired.data_ptr<int>(), num_cells * sizeof(int));
 
+  auto& fast_crit_map = ws.hlp.fast_crit_map;
+  fast_crit_map.assign(num_cells, -1);
+  for (size_t i = 0; i < cp.maxes.size(); ++i) fast_crit_map[cp.maxes[i]] = i;
+  for (size_t i = 0; i < cp.mins.size(); ++i) fast_crit_map[cp.mins[i]] = i;
+  for (size_t i = 0; i < cp.saddles.size(); ++i) fast_crit_map[cp.saddles[i]] = i;
+
   auto t4 = std::chrono::high_resolution_clock::now();
-  ws.gradient_data = {std::move(cp), std::move(paired_with), d_data, d_paired_with, cpt.saddles};
+  ws.gradient_data = {std::move(cp), std::move(paired_with), d_data, d_paired_with, d_saddles};
 }
 
-template <bool IS_DUAL = false>
-void compute_cell_groups(const GradientData& gdata, const int* fast_crit_map, const int* uf_max_parent,
-                         const int* crit_maxes, const int* uf_min_parent, const int* crit_mins,
-                         const int* fast_region_id, int* out_face_groups, int* out_vertex_groups, size_t num_crit_maxes,
-                         size_t num_crit_mins) {
+template <bool IS_DUAL = false, typename Workspace>
+void compute_cell_groups(Workspace& ws) {
   RECORD_FUNCTION("cell_groups_gpu", {});
-  int H = gdata.d_data.size(0);
-  int W = gdata.d_data.size(1);
-  int Nx = W + 1;
+  const auto& gdata = ws.gradient_data;
+  int H = ws.H;
+  int W = ws.W;
+  int Nx = ws.Nx;
   int num_cells = 4 * (H + 1) * (W + 1);
   int num_faces = (H + 1) * (W + 1);
   int num_vertices = (H) * (W);
 
-  auto dev = gdata.d_data.device();
-  auto i_opts = torch::TensorOptions().dtype(torch::kInt32).device(dev);
+  auto& uf_max = ws.p_data.uf_max;
+  auto& uf_min = ws.p_data.uf_min;
+  const auto& max_alive = ws.p_data.max_alive;
+  const auto& min_alive = ws.p_data.min_alive;
+  const auto& crit_maxes = ws.gradient_data.cp.maxes;
+  const auto& crit_mins = ws.gradient_data.cp.mins;
+  const auto& fast_crit_map = ws.hlp.fast_crit_map;
+  size_t num_crit_maxes = crit_maxes.size();
+  size_t num_crit_mins = crit_mins.size();
 
-  torch::Tensor d_fast_crit_map = torch::from_blob((void*)fast_crit_map, {num_cells}, torch::kInt32).to(dev);
+  std::vector<int> fast_region_id(num_cells, -1);
+  {
+    RECORD_FUNCTION("cell_groups_preproc_cpu", {});
+    // flatten union_find structures and build fast_region_id
+    tbb::parallel_invoke(
+        [&]() {
+          for (size_t i = 0; i < uf_max.parent.size(); ++i) uf_max.find(i);
+        },
+        [&]() {
+          for (size_t i = 0; i < uf_min.parent.size(); ++i) uf_min.find(i);
+        },
+        [&]() {
+          int region_counter = 0;
+          for (size_t i = 0; i < crit_maxes.size(); ++i) {
+            if (max_alive[i]) fast_region_id[crit_maxes[i]] = region_counter++;
+          }
+        },
+        [&]() {
+          int region_counter = 0;
+          for (size_t i = 0; i < crit_mins.size(); ++i) {
+            if (min_alive[i]) fast_region_id[crit_mins[i]] = region_counter++;
+          }
+        });
+  }
 
-  torch::Tensor d_uf_max_parent = torch::from_blob((void*)uf_max_parent, {(long)num_crit_maxes}, torch::kInt32).to(dev);
-  torch::Tensor d_crit_maxes = torch::from_blob((void*)crit_maxes, {(long)num_crit_maxes}, torch::kInt32).to(dev);
+  auto i_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCUDA);
 
-  torch::Tensor d_uf_min_parent = torch::from_blob((void*)uf_min_parent, {(long)num_crit_mins}, torch::kInt32).to(dev);
-  torch::Tensor d_crit_mins = torch::from_blob((void*)crit_mins, {(long)num_crit_mins}, torch::kInt32).to(dev);
+  torch::Tensor d_fast_crit_map = torch::from_blob((void*)fast_crit_map.data(), {num_cells}, torch::kInt32).to(torch::kCUDA);
 
-  torch::Tensor d_fast_region = torch::from_blob((void*)fast_region_id, {num_cells}, torch::kInt32).to(dev);
+  torch::Tensor d_uf_max_parent =
+      torch::from_blob((void*)uf_max.parent.data(), {(long)num_crit_maxes}, torch::kInt32).to(torch::kCUDA);
+  torch::Tensor d_crit_maxes =
+      torch::from_blob((void*)crit_maxes.data(), {(long)num_crit_maxes}, torch::kInt32).to(torch::kCUDA);
+
+  torch::Tensor d_uf_min_parent =
+      torch::from_blob((void*)uf_min.parent.data(), {(long)num_crit_mins}, torch::kInt32).to(torch::kCUDA);
+  torch::Tensor d_crit_mins = torch::from_blob((void*)crit_mins.data(), {(long)num_crit_mins}, torch::kInt32).to(torch::kCUDA);
+
+  torch::Tensor d_fast_region = torch::from_blob((void*)fast_region_id.data(), {num_cells}, torch::kInt32).to(torch::kCUDA);
 
   // Pre-allocate output on CUDA, -2 means unknonw
-  torch::Tensor d_out_face_groups = torch::full({num_faces}, -2, i_opts);
-  torch::Tensor d_out_vertex_groups = torch::full({num_vertices}, -2, i_opts);
-
+  torch::Tensor d_out_face_groups = torch::full({H + 1, W + 1}, -2, i_opts);
+  torch::Tensor d_out_vertex_groups = torch::full({H, W}, -2, i_opts);
   {
     RECORD_FUNCTION("trace_faces", {});
-    launch_cell_groups_cuda(gdata.d_data.data_ptr<float>(), gdata.d_paired_with.data_ptr<int>(),
-                            d_fast_crit_map.data_ptr<int>(), d_uf_max_parent.data_ptr<int>(),
-                            d_crit_maxes.data_ptr<int>(), d_fast_region.data_ptr<int>(),
-                            d_out_face_groups.data_ptr<int>(), H, W, Nx, IS_DUAL,
-                            /*trace_faces=*/true);
+    launch_cell_groups_cuda(gdata.d_data.data_ptr<float>(), gdata.d_paired_with.data_ptr<int>(), d_fast_crit_map.data_ptr<int>(), d_uf_max_parent.data_ptr<int>(), d_crit_maxes.data_ptr<int>(),
+                            d_fast_region.data_ptr<int>(), d_out_face_groups.data_ptr<int>(), H, W, Nx, IS_DUAL, /*trace_faces=*/true);
   }
   {
     RECORD_FUNCTION("trace_vertices", {});
-    launch_cell_groups_cuda(gdata.d_data.data_ptr<float>(), gdata.d_paired_with.data_ptr<int>(),
-                            d_fast_crit_map.data_ptr<int>(), d_uf_min_parent.data_ptr<int>(),
-                            d_crit_mins.data_ptr<int>(), d_fast_region.data_ptr<int>(),
-                            d_out_vertex_groups.data_ptr<int>(), H, W, Nx, IS_DUAL,
-                            /*trace_faces=*/false);
+    launch_cell_groups_cuda(gdata.d_data.data_ptr<float>(), gdata.d_paired_with.data_ptr<int>(), d_fast_crit_map.data_ptr<int>(), d_uf_min_parent.data_ptr<int>(), d_crit_mins.data_ptr<int>(),
+                            d_fast_region.data_ptr<int>(), d_out_vertex_groups.data_ptr<int>(), H, W, Nx, IS_DUAL, /*trace_faces=*/false);
   }
 
   // Bring the result back to CPU memory synchronously
   {
     RECORD_FUNCTION("Memcpy_Device_To_Host", {});
-    // Wrap your existing raw pointers
     auto cpu_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
-    torch::Tensor cpu_face_wrapper = torch::from_blob(out_face_groups, {num_faces}, cpu_opts);
-    torch::Tensor cpu_vert_wrapper = torch::from_blob(out_vertex_groups, {num_vertices}, cpu_opts);
+    torch::Tensor out_face_groups = ws.cell_groups.face_groups.request({H + 1, W + 1}, cpu_opts);
+    torch::Tensor out_vertex_groups = ws.cell_groups.vertex_groups.request({H, W}, cpu_opts);
 
     // 2. Direct copy (GPU -> Pre-existing CPU RAM)
-    cpu_face_wrapper.copy_(d_out_face_groups, /*non_blocking=*/false);
-    cpu_vert_wrapper.copy_(d_out_vertex_groups, /*non_blocking=*/false);
+    out_face_groups.copy_(d_out_face_groups, /*non_blocking=*/false);
+    out_vertex_groups.copy_(d_out_vertex_groups, /*non_blocking=*/false);
   }
 }
 
