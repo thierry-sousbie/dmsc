@@ -23,6 +23,8 @@
 #include "./arcs_topology_struct.hxx"
 #include "./cell_compare.hxx"
 
+namespace cpu {
+
 template <bool IS_DUAL, typename Workspace>
 void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, bool trace_arcs) {
   RECORD_FUNCTION("persistence_cpu", {});
@@ -178,3 +180,5 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
         });
   }
 }
+
+}  // namespace cpu

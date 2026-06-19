@@ -25,6 +25,8 @@
 #include "./cpu/workspace.hxx"
 #include "./dmsc_struct.hxx"
 
+using namespace cpu;
+
 /*
 Cell_type Name    Geometry           Count       Topology (PRIMAL)  Topology (DUAL)
 3         Face    pixel corner       (W+1)x(H+1) Maximum            Minimum

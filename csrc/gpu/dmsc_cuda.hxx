@@ -15,6 +15,9 @@
 #include <vector>
 
 // #include "../cpu/arcs_simplification.hxx"
+#include "../cpu/arcs_simplification.hxx"
+#include "../cpu/persistence_struct.hxx"
+#include "./arcs_geometry_struct.hxx"
 #include "./arcs_simplification_struct.hxx"
 // #include "./gradient_struct.hxx"
 #include "./trace_saddles_helpers.hxx"
@@ -220,7 +223,8 @@ void trace_raw_arcs_geometry(Workspace& ws, const GradientData& gdata, const int
 
 template <typename Workspace>
 void simplify_arcs_geometry(Workspace& ws, SaddleNodes& sn, int num_crit_maxes, int num_crit_mins,
-                            std::vector<CancelEvent>& min_cancellations, std::vector<CancelEvent>& max_cancellations) {
+                            std::vector<cpu::CancelEvent>& min_cancellations,
+                            std::vector<cpu::CancelEvent>& max_cancellations) {
   RECORD_FUNCTION("simplify_arcs_geometry_cuda_dispatch", {});
 
   int num_saddles = sn.nodes.size();
@@ -354,9 +358,8 @@ void simplify_arcs_geometry(Workspace& ws, SaddleNodes& sn, int num_crit_maxes, 
     std::memcpy(cpu_min_dag.data(), cpu_min_dag_tensor.data_ptr(), min_dag_sz * sizeof(GPUDAGNode));
   }
 
-  assemble_simplified_geometry<GPUDAGNode, GPUPathRef>(ws, sn, max_alive, min_alive, init_t_max, init_t_min,
-                                                       base_max_len, base_min_len, base_max_offset, base_min_offset,
-                                                       max_parent, min_parent, max_weight, min_weight, cpu_max_dag,
-                                                       max_dag_sz, cpu_min_dag, min_dag_sz);
+  cpu::assemble_simplified_geometry<GPUDAGNode, GPUPathRef>(
+      ws, max_alive, min_alive, init_t_max, init_t_min, base_max_len, base_min_len, base_max_offset, base_min_offset,
+      max_parent, min_parent, max_weight, min_weight, cpu_max_dag, max_dag_sz, cpu_min_dag, min_dag_sz);
 }
 }  // namespace gpu

@@ -4,6 +4,8 @@
 
 #include "../union_find.hxx"
 
+namespace cpu {
+
 struct CancelEvent {
   int saddle_id;  // Dense cell ID of the saddle
   int s_idx;      // saddle index in the saddle list
@@ -34,3 +36,5 @@ struct PersistenceData {
     // max_cancellations.clear();
   }
 };
+
+}  // namespace cpu

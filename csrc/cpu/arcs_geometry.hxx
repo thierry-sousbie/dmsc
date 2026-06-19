@@ -11,6 +11,8 @@
 #include "../cell_complex.hxx"
 #include "./arcs_geometry_struct.hxx"
 
+namespace cpu {
+
 template <typename Workspace>
 void trace_raw_arcs_geometry(Workspace& ws) {
   RECORD_FUNCTION("trace_raw_arcs_geometry_flat", {});
@@ -151,3 +153,4 @@ void trace_raw_arcs_geometry(Workspace& ws) {
     }
   });
 }
+}  // namespace cpu

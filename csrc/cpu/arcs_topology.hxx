@@ -9,6 +9,8 @@
 #include "./arcs_topology_struct.hxx"
 #include "./cell_compare.hxx"
 
+namespace cpu {
+
 struct TraceRes {
   int target;
   int length;
@@ -192,3 +194,5 @@ void trace_from_saddles(Workspace& ws, const torch::Tensor& scalar_field) {
 
   update_crit_mids<IS_DUAL>(ws);
 }
+
+}  // namespace cpu

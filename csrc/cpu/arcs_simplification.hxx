@@ -20,6 +20,8 @@
 #define MAX_DAG_ALLOC_PER_PAIR 5
 #define MIN_DAG_ALLOC_TOTAL (1UL << 18)
 
+namespace cpu {
+
 struct DAGNode {
   int left_id;
   int right_id;
@@ -35,7 +37,7 @@ struct PathRef {
 
 // This is templated because we ll use different structures for metal because of alignment
 template <typename NodeType, typename RefType, typename Workspace>
-void assemble_simplified_geometry(Workspace& ws, SaddleNodes& sn, const std::vector<uint8_t>& max_alive,
+void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max_alive,
                                   const std::vector<uint8_t>& min_alive, const std::vector<int>& init_t_max,
                                   const std::vector<int>& init_t_min, const std::vector<int>& base_max_len,
                                   const std::vector<int>& base_min_len, const std::vector<int>& base_max_offset,
@@ -44,6 +46,7 @@ void assemble_simplified_geometry(Workspace& ws, SaddleNodes& sn, const std::vec
                                   const std::vector<RefType>& min_weight, std::vector<NodeType>& max_dag,
                                   int& max_dag_sz, std::vector<NodeType>& min_dag, int& min_dag_sz) {
   RECORD_FUNCTION("assemble_simplified_geometry", {});
+  auto& sn = ws.saddle_nodes;
 
   int num_saddles = sn.nodes.size();
   int N2 = num_saddles * 2;
@@ -432,7 +435,8 @@ void simplify_arcs_geometry(Workspace& ws) {
   }
 
   // Delegate the final memory assembly phase so we can reuse the code on GPU
-  assemble_simplified_geometry<DAGNode, PathRef>(ws, sn, max_alive, min_alive, init_t_max, init_t_min, base_max_len,
+  assemble_simplified_geometry<DAGNode, PathRef>(ws, max_alive, min_alive, init_t_max, init_t_min, base_max_len,
                                                  base_min_len, base_max_offset, base_min_offset, max_parent, min_parent,
                                                  max_weight, min_weight, max_dag, max_dag_sz, min_dag, min_dag_sz);
 }
+}  // namespace cpu

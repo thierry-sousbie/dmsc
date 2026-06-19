@@ -8,6 +8,8 @@
 #define CACHE_IS_EMPTY -2
 #define CACHE_DEPTH 16
 
+namespace cpu {
+
 inline int trace_faces(int start_face, const int* paired_with, int H, int W, int Nx, int* out_groups, int* cached_value,
                        int* path_buffer) {
   if (start_face == -1) return -1;
@@ -225,3 +227,5 @@ void compute_cell_groups(Workspace& ws) {
     });
   }
 }
+
+}  // namespace cpu

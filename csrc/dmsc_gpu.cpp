@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "./cpu/arcs_simplification.hxx"
+#include "./cpu/cell_compare.hxx"
 #include "./cpu/persistence.hxx"
 #include "./dmsc_struct.hxx"
 #include "./gpu/workspace.hxx"
@@ -26,6 +27,8 @@
 #else
 #include "./gpu/dmsc_cuda.hxx"
 #endif
+
+using namespace gpu;
 
 /*
 Physical Geometry   cell_type Topology (IS_DUAL=false)  Topology (IS_DUAL=true)
@@ -100,13 +103,15 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
         [&]() {
           for (size_t i = 0; i < crit_maxes.size(); ++i) {
             fast_crit_map[crit_maxes[i]] = i;
-            crit_max_vals[i] = cell_value<IS_DUAL>(3, get_y(crit_maxes[i], Nx), get_x(crit_maxes[i], Nx), H, W, data);
+            crit_max_vals[i] =
+                cpu::cell_value<IS_DUAL>(3, get_y(crit_maxes[i], Nx), get_x(crit_maxes[i], Nx), H, W, data);
           }
         },
         [&]() {
           for (size_t i = 0; i < crit_mins.size(); ++i) {
             fast_crit_map[crit_mins[i]] = i;
-            crit_min_vals[i] = cell_value<IS_DUAL>(0, get_y(crit_mins[i], Nx), get_x(crit_mins[i], Nx), H, W, data);
+            crit_min_vals[i] =
+                cpu::cell_value<IS_DUAL>(0, get_y(crit_mins[i], Nx), get_x(crit_mins[i], Nx), H, W, data);
           }
         },
         [&]() {
@@ -155,19 +160,19 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
   // compute_ppairs_and_simplify<IS_DUAL>(persistence_threshold, trace_arcs, fast_crit_map, min_saddles, max_saddles,
   //                                      crit_mins, crit_maxes, crit_min_vals, crit_maxes_vals, min_alive, max_alive,
   //                                      uf_min, uf_max, min_cancellations, max_cancellations);
-  compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs);
+  cpu::compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs);
   auto& min_alive = ws.p_data.min_alive;
   auto& max_alive = ws.p_data.max_alive;
   auto& uf_min = ws.p_data.uf_min;
   auto& uf_max = ws.p_data.uf_max;
-  auto& min_cancellations = ws.p_data.min_cancellations;
-  auto& max_cancellations = ws.p_data.max_cancellations;
+  // auto& min_cancellations = ws.p_data.min_cancellations;
+  // auto& max_cancellations = ws.p_data.max_cancellations;
 
   // --- 1-manifolds graph ---
   if (trace_arcs) {
     // simplify_arcs_geometry(ws, saddle_nodes, crit_maxes.size(), crit_mins.size(), min_cancellations,
     // max_cancellations);
-    ::simplify_arcs_geometry(ws);
+    cpu::simplify_arcs_geometry(ws);
   }
 
   // --- Compute basins of attraction ---

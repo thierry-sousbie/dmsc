@@ -2,6 +2,8 @@
 
 #include <vector>
 
+namespace cpu {
+
 struct CriticalPoints {
   std::vector<int> maxes;
   std::vector<int> saddles;
@@ -13,3 +15,5 @@ struct CriticalPoints {
     mins.clear();
   }
 };
+
+}  // namespace cpu

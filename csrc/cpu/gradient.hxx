@@ -12,6 +12,8 @@
 #include "./cell_compare.hxx"
 #include "./gradient_struct.hxx"
 
+namespace cpu {
+
 template <bool IS_DUAL, typename scalar_t>
 void compute_gradient(int total_blocks, int num_blocks_x, int block_size, int H, int W, int Nx, const scalar_t* data,
                       std::vector<int>& paired_with) {
@@ -235,3 +237,5 @@ void compute_gradient_and_crit_points(Workspace& ws, const torch::Tensor& scalar
   extract_critical_points(gd.paired_with, ws.H, ws.W, ws.Nx, gd.cp.mins, gd.cp.saddles, gd.cp.maxes);
   update_helpers<IS_DUAL>(ws, data);
 }
+
+}  // namespace cpu

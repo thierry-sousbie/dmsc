@@ -2,10 +2,11 @@
 
 #include <vector>
 
-#include "../cpu/arcs_geometry_struct.hxx"
+// #include "../cpu/arcs_geometry_struct.hxx"
 #include "../cpu/persistence_struct.hxx"
 #include "../dmsc_struct.hxx"
 #include "../managed_tensor.hxx"
+#include "./arcs_geometry_struct.hxx"
 #include "./arcs_topology_struct.hxx"
 #include "./gradient_struct.hxx"
 
@@ -38,8 +39,8 @@ struct Workspace {
   WSHelpers hlp;
   gpu::GradientData gradient_data;
   gpu::ArcsTopology arcs_topology;
-  SaddleNodes saddle_nodes;
-  PersistenceData p_data;
+  gpu::SaddleNodes saddle_nodes;
+  cpu::PersistenceData p_data;
 
   Workspace(int H, int W) : H(H), W(W), Nx(W + 1), num_cells(4 * (H + 1) * (W + 1)) {}
 

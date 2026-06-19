@@ -6,7 +6,7 @@
 
 #include "../managed_tensor.hxx"
 
-namespace cpu {
+namespace gpu {
 struct Arc {
   int target;  // index of the connected max/min
   int offset;  // starting index in the flat geometry array
@@ -29,4 +29,4 @@ struct SaddleNodes {
     nodes.clear();
   }
 };
-}  // namespace cpu
+}  // namespace gpu
