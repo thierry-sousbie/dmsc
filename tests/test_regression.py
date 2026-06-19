@@ -28,16 +28,16 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
     assert len(gt_dict["sad_pts"]) == len(computed_ms.sad_pts), "Number of saddles differ"
 
     # 2. Check sets of critical points (unordered equivalence)
-    assert set(gt_dict["max_pts"].numpy()) == set(computed_ms.max_pts.cpu().numpy()), "Set of maxima differ"
-    assert set(gt_dict["min_pts"].numpy()) == set(computed_ms.min_pts.cpu().numpy()), "Set of minima differ"
-    assert set(gt_dict["sad_pts"].numpy()) == set(computed_ms.sad_pts.cpu().numpy()), "Set of saddles differ"
+    assert set(gt_dict["max_pts"].cpu().numpy()) == set(computed_ms.max_pts.cpu().numpy()), "Set of maxima differ"
+    assert set(gt_dict["min_pts"].cpu().numpy()) == set(computed_ms.min_pts.cpu().numpy()), "Set of minima differ"
+    assert set(gt_dict["sad_pts"].cpu().numpy()) == set(computed_ms.sad_pts.cpu().numpy()), "Set of saddles differ"
 
     # 3. Check persistence values (sorted equivalence)
-    gt_p_max = np.sort(gt_dict["p_max"].numpy())
+    gt_p_max = np.sort(gt_dict["p_max"].cpu().numpy())
     comp_p_max = np.sort(computed_ms.p_max.cpu().numpy())
     assert np.allclose(gt_p_max, comp_p_max), "Persistence values for max-sad pairs differ"
 
-    gt_p_min = np.sort(gt_dict["p_min"].numpy())
+    gt_p_min = np.sort(gt_dict["p_min"].cpu().numpy())
     comp_p_min = np.sort(computed_ms.p_min.cpu().numpy())
     assert np.allclose(gt_p_min, comp_p_min), "Persistence values for min-sad pairs differ"
 
@@ -55,7 +55,7 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
             assert comp_regions is None or comp_regions.numel() == 0
             return
 
-        gt_arr = gt_regions.numpy().flatten()
+        gt_arr = gt_regions.cpu().numpy().flatten()
         comp_arr = comp_regions.cpu().numpy().flatten()
         assert len(gt_arr) == len(comp_arr), f"{name} shape mismatch"
 

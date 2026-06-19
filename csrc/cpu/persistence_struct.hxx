@@ -24,8 +24,8 @@ struct CancelEvent {
 struct PersistenceData {
   UnionFind uf_max;
   UnionFind uf_min;
-  std::vector<bool> max_alive;
-  std::vector<bool> min_alive;
+  std::vector<uint8_t> max_alive;
+  std::vector<uint8_t> min_alive;
   std::vector<CancelEvent> min_cancellations;
   std::vector<CancelEvent> max_cancellations;
 

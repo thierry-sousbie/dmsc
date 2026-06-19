@@ -146,8 +146,7 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
   // SaddleNodes saddle_nodes;  // arcs incident to saddle points
   auto& saddle_nodes = ws.saddle_nodes;
   if (trace_arcs) {
-    gpu::trace_raw_arcs_geometry(ws, gradient_data, fast_crit_map.data(), arcs_topology.max_arcs_len,
-                                 arcs_topology.min_arcs_len);
+    gpu::trace_raw_arcs_geometry(ws, gradient_data, arcs_topology.max_arcs_len, arcs_topology.min_arcs_len);
   }
 
   // UnionFind uf_max(crit_maxes.size());

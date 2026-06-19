@@ -37,9 +37,9 @@ def generate_noisy_landscape(H=20, W=20, with_loop=False):
 def plot_discrete_gradient(ax, img, ms_complex, H, W, plot_bg=True, title="Raw Discrete Gradient Vector Field"):
     """Plots the raw dmsc gradient vector field (Vectorized for high performance)."""
     if plot_bg:
-        ax.imshow(img.numpy(), cmap="viridis", origin="lower", alpha=0.6, zorder=0)
+        ax.imshow(img.cpu().numpy(), cmap="viridis", origin="lower", alpha=0.6, zorder=0)
 
-    grad_numpy = ms_complex.grad_indices.numpy()
+    grad_numpy = ms_complex.grad_indices.cpu().numpy()
 
     # Vectorized extraction to avoid massive Python for-loop overhead
     valid_mask = grad_numpy != -1
@@ -58,8 +58,8 @@ def plot_discrete_gradient(ax, img, ms_complex, H, W, plot_bg=True, title="Raw D
     dst_ids = dst_ids[arrow_mask]
 
     # Decode coordinates correctly based on cell type using the unified method
-    src_coords = ms_complex.to_coordinates_yx(torch.from_numpy(src_ids), staggered=True).numpy()
-    dst_coords = ms_complex.to_coordinates_yx(torch.from_numpy(dst_ids), staggered=True).numpy()
+    src_coords = ms_complex.to_coordinates_yx(torch.from_numpy(src_ids), staggered=True).cpu().numpy()
+    dst_coords = ms_complex.to_coordinates_yx(torch.from_numpy(dst_ids), staggered=True).cpu().numpy()
 
     y_i, x_i = src_coords[:, 0], src_coords[:, 1]
     y_t, x_t = dst_coords[:, 0], dst_coords[:, 1]
@@ -85,9 +85,9 @@ def plot_discrete_gradient(ax, img, ms_complex, H, W, plot_bg=True, title="Raw D
             zorder=10,
         )
 
-    max_pts = ms_complex.offset_max_pts_yx.numpy()
-    min_pts = ms_complex.offset_min_pts_yx.numpy()
-    sad_pts = ms_complex.offset_sad_pts_yx.numpy()
+    max_pts = ms_complex.offset_max_pts_yx.cpu().numpy()
+    min_pts = ms_complex.offset_min_pts_yx.cpu().numpy()
+    sad_pts = ms_complex.offset_sad_pts_yx.cpu().numpy()
 
     # 4. Plot Critical Nodes
     if len(max_pts) > 0:
@@ -121,15 +121,15 @@ def plot_dmsc_complex(
     peaks = ms_complex.peaks
 
     # Use to_coordinates_yx to decode the raw 1D arrays into displayable 2D points
-    max_pts = ms_complex.to_coordinates_yx(ms_complex.max_pts, staggered=True).numpy()
-    min_pts = ms_complex.to_coordinates_yx(ms_complex.min_pts, staggered=True).numpy()
-    sad_pts = ms_complex.to_coordinates_yx(ms_complex.sad_pts, staggered=True).numpy()
+    max_pts = ms_complex.to_coordinates_yx(ms_complex.max_pts, staggered=True).cpu().numpy()
+    min_pts = ms_complex.to_coordinates_yx(ms_complex.min_pts, staggered=True).cpu().numpy()
+    sad_pts = ms_complex.to_coordinates_yx(ms_complex.sad_pts, staggered=True).cpu().numpy()
 
     edges_max = ms_complex.e_max
     edges_min = ms_complex.e_min
 
     H, W = img.shape
-    regions = peaks.numpy() if peaks is not None and peaks.numel() > 0 else None
+    regions = peaks.cpu().numpy() if peaks is not None and peaks.numel() > 0 else None
 
     if regions is not None:
         rH, rW = regions.shape
@@ -148,7 +148,7 @@ def plot_dmsc_complex(
         masked_regions = np.ma.masked_where(regions == -1, colored_regions)
         ax.imshow(masked_regions, cmap="tab20", origin="lower", extent=my_extent, interpolation="nearest", zorder=1)
     else:
-        ax.imshow(img.numpy(), cmap="viridis", origin="lower", zorder=0)
+        ax.imshow(img.cpu().numpy(), cmap="viridis", origin="lower", zorder=0)
 
     # 2. Plot Region Boundaries (Watershed lines)
     if plot_boundaries and regions is not None:
@@ -188,7 +188,7 @@ def plot_dmsc_complex(
                 arc1, arc2 = ms_complex.get_ridge(i, split_arcs=True)
                 for arc in (arc1, arc2):
                     if len(arc) > 0:
-                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).numpy()
+                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).cpu().numpy()
                         ax.plot(
                             coords[:, 1],
                             coords[:, 0],
@@ -202,7 +202,7 @@ def plot_dmsc_complex(
                 arc1, arc2 = ms_complex.get_valley(i, split_arcs=True)
                 for arc in (arc1, arc2):
                     if len(arc) > 0:
-                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).numpy()
+                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).cpu().numpy()
                         ax.plot(
                             coords[:, 1],
                             coords[:, 0],
@@ -218,7 +218,7 @@ def plot_dmsc_complex(
                 if edges_indices is None or len(edges_indices) == 0:
                     return
                 segs = []
-                for s_idx, t_idx in edges_indices.numpy():
+                for s_idx, t_idx in edges_indices.cpu().numpy():
                     sy, sx = saddles[s_idx]
                     ty, tx = targets[t_idx]
                     segs.append([[sx, sy], [tx, ty]])
@@ -248,8 +248,8 @@ def plot_dmsc_complex(
             valid_extrema_ids = extrema_pts[valid_extrema_indices]
 
             # 4. Decode the raw cell_ids to physical YX coordinates
-            ex_coords = ms_complex.to_coordinates_yx(valid_extrema_ids, staggered=True).numpy()
-            sad_coords = ms_complex.to_coordinates_yx(valid_saddle_ids, staggered=True).numpy()
+            ex_coords = ms_complex.to_coordinates_yx(valid_extrema_ids, staggered=True).cpu().numpy()
+            sad_coords = ms_complex.to_coordinates_yx(valid_saddle_ids, staggered=True).cpu().numpy()
 
             segs = []
             for i in range(len(ex_coords)):
@@ -309,7 +309,7 @@ def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_bound
         ax.axis("off")
         return
 
-    basins = ms_complex.basins.numpy()
+    basins = ms_complex.basins.cpu().numpy()
 
     H, W = img.shape
     rH, rW = basins.shape
@@ -332,7 +332,7 @@ def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_bound
 
         ax.imshow(masked_regions, cmap="tab20", origin="lower", extent=my_extent, interpolation="nearest", zorder=1)
     else:
-        ax.imshow(img.numpy(), cmap="viridis", origin="lower", zorder=0)
+        ax.imshow(img.cpu().numpy(), cmap="viridis", origin="lower", zorder=0)
 
     if plot_boundaries:
         segs = []
@@ -365,9 +365,9 @@ def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_bound
             )
             ax.add_collection(lc)
 
-    max_pts = ms_complex.to_coordinates_yx(ms_complex.max_pts, staggered=True).numpy()
-    min_pts = ms_complex.to_coordinates_yx(ms_complex.min_pts, staggered=True).numpy()
-    sad_pts = ms_complex.to_coordinates_yx(ms_complex.sad_pts, staggered=True).numpy()
+    max_pts = ms_complex.to_coordinates_yx(ms_complex.max_pts, staggered=True).cpu().numpy()
+    min_pts = ms_complex.to_coordinates_yx(ms_complex.min_pts, staggered=True).cpu().numpy()
+    sad_pts = ms_complex.to_coordinates_yx(ms_complex.sad_pts, staggered=True).cpu().numpy()
 
     # Plot Topological Edges (Manifolds or Straight Lines) overlayed on Basins
     if plot_edges:
@@ -378,7 +378,7 @@ def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_bound
                 arc1, arc2 = ms_complex.get_ridge(i, split_arcs=True)
                 for arc in (arc1, arc2):
                     if len(arc) > 0:
-                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).numpy()
+                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).cpu().numpy()
                         ax.plot(
                             coords[:, 1],
                             coords[:, 0],
@@ -392,7 +392,7 @@ def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_bound
                 arc1, arc2 = ms_complex.get_valley(i, split_arcs=True)
                 for arc in (arc1, arc2):
                     if len(arc) > 0:
-                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).numpy()
+                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).cpu().numpy()
                         ax.plot(
                             coords[:, 1],
                             coords[:, 0],
@@ -408,7 +408,7 @@ def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_bound
                 if edges_indices is None or len(edges_indices) == 0:
                     return
                 segs = []
-                for s_idx, t_idx in edges_indices.numpy():
+                for s_idx, t_idx in edges_indices.cpu().numpy():
                     sy, sx = saddles[s_idx]
                     ty, tx = targets[t_idx]
                     segs.append([[sx, sy], [tx, ty]])
@@ -444,8 +444,8 @@ def plot_barcode(ax, ms_raw, ms_flt=None, title="Persistence Barcode"):
     def extract_and_sort(ms_complex):
         if ms_complex is None:
             return np.array([]), np.array([])
-        p_max = ms_complex.p_max.numpy()
-        p_min = ms_complex.p_min.numpy()
+        p_max = ms_complex.p_max.cpu().numpy()
+        p_min = ms_complex.p_min.cpu().numpy()
         # Filter out near-zero or invalid persistences
         p_max = p_max[p_max > 1e-6]
         p_min = p_min[p_min > 1e-6]

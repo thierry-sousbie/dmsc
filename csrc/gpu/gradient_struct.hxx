@@ -17,8 +17,14 @@ struct GradientData {
   // Handles for GPU memory. keep data between calls so we don t need to reallocate
   ManagedTensor d_paired_with;
   ManagedTensor d_saddles;
+  ManagedTensor d_maxes;
+  ManagedTensor d_mins;
 
-  GradientData() : d_paired_with("d_paired_with", false), d_saddles("d_saddles", false) {}
+  GradientData()
+      : d_paired_with("d_paired_with", false),
+        d_saddles("d_saddles", false),
+        d_maxes("d_maxes", false),
+        d_mins("d_mins", false) {}
 
   void reset() {}
 };

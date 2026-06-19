@@ -89,13 +89,16 @@ void compute_gradient(Workspace& ws, torch::Tensor& active_field) {
   auto cpt = launch_extract_critical_points_metal(d_paired_with, H, W, Nx, false);
   CriticalPoints cp = tensors_to_critical_points(cpt);
 
+  // Push critical points to GPU natively
+  torch::Tensor d_maxes = ws.gradient_data.d_maxes.copy_from_cpu_ptr((void*)cp.maxes.data(), {(long)cp.maxes.size()}, opts);
+  torch::Tensor d_mins = ws.gradient_data.d_mins.copy_from_cpu_ptr((void*)cp.mins.data(), {(long)cp.mins.size()}, opts);
+  torch::Tensor d_saddles = ws.gradient_data.d_saddles.copy_from_tensor(cpt.saddles, opts);
+
   auto& fast_crit_map = ws.hlp.fast_crit_map;
   fast_crit_map.assign(num_cells, -1);
   for (size_t i = 0; i < cp.maxes.size(); ++i) fast_crit_map[cp.maxes[i]] = i;
   for (size_t i = 0; i < cp.mins.size(); ++i) fast_crit_map[cp.mins[i]] = i;
   for (size_t i = 0; i < cp.saddles.size(); ++i) fast_crit_map[cp.saddles[i]] = i;
-
-  ws.gradient_data.d_saddles.copy_from_tensor(cpt.saddles, opts);
 
   ws.gradient_data.cp = std::move(cp);
   ws.gradient_data.paired_with = std::move(paired_with);
@@ -122,49 +125,47 @@ void compute_cell_groups(Workspace& ws) {
   size_t num_crit_maxes = crit_maxes.size();
   size_t num_crit_mins = crit_mins.size();
 
-  std::vector<int> fast_region_id(num_cells, -1);
   {
     RECORD_FUNCTION("cell_groups_preproc_cpu", {});
-    // flatten union_find structures and build fast_region_id
+    // flatten union_find structures
     tbb::parallel_invoke(
         [&]() {
           for (size_t i = 0; i < uf_max.parent.size(); ++i) uf_max.find(i);
         },
         [&]() {
           for (size_t i = 0; i < uf_min.parent.size(); ++i) uf_min.find(i);
-        },
-        [&]() {
-          int region_counter = 0;
-          for (size_t i = 0; i < crit_maxes.size(); ++i) {
-            if (max_alive[i]) fast_region_id[crit_maxes[i]] = region_counter++;
-          }
-        },
-        [&]() {
-          int region_counter = 0;
-          for (size_t i = 0; i < crit_mins.size(); ++i) {
-            if (min_alive[i]) fast_region_id[crit_mins[i]] = region_counter++;
-          }
         });
   }
 
-  auto i_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS);
+  auto dev = ws.d_data.device();
+  auto i_opts = torch::TensorOptions().dtype(torch::kInt32).device(dev);
+  auto byte_opts = torch::TensorOptions().dtype(torch::kUInt8).device(dev);
 
-  torch::Tensor d_fast_crit_map = torch::from_blob((void*)fast_crit_map.data(), {num_cells}, torch::kInt32).to(torch::kMPS);
+  torch::Tensor d_fast_crit_map = torch::from_blob((void*)fast_crit_map.data(), {num_cells}, torch::kInt32).to(dev, /*non_blocking=*/true);
 
   torch::Tensor d_uf_max_parent =
-      torch::from_blob((void*)uf_max.parent.data(), {(long)num_crit_maxes}, torch::kInt32).to(torch::kMPS);
-  torch::Tensor d_crit_maxes =
-      torch::from_blob((void*)crit_maxes.data(), {(long)num_crit_maxes}, torch::kInt32).to(torch::kMPS);
+      torch::from_blob((void*)uf_max.parent.data(), {(long)num_crit_maxes}, torch::kInt32).to(dev, /*non_blocking=*/true);
+  torch::Tensor d_crit_maxes = gdata.d_maxes.get();
 
   torch::Tensor d_uf_min_parent =
-      torch::from_blob((void*)uf_min.parent.data(), {(long)num_crit_mins}, torch::kInt32).to(torch::kMPS);
-  torch::Tensor d_crit_mins = torch::from_blob((void*)crit_mins.data(), {(long)num_crit_mins}, torch::kInt32).to(torch::kMPS);
+      torch::from_blob((void*)uf_min.parent.data(), {(long)num_crit_mins}, torch::kInt32).to(dev, /*non_blocking=*/true);
+  torch::Tensor d_crit_mins = gdata.d_mins.get();
 
-  torch::Tensor d_fast_region = torch::from_blob((void*)fast_region_id.data(), {num_cells}, torch::kInt32).to(torch::kMPS);
+  torch::Tensor d_max_alive = torch::from_blob((void*)max_alive.data(), {(long)num_crit_maxes}, torch::kUInt8).to(dev, /*non_blocking=*/true).to(torch::kBool);
+  torch::Tensor d_min_alive = torch::from_blob((void*)min_alive.data(), {(long)num_crit_mins}, torch::kUInt8).to(dev, /*non_blocking=*/true).to(torch::kBool);
 
-  // Pre-allocate output on MPS, -2 means unknonw
-  torch::Tensor d_out_face_groups = torch::full({H + 1, W + 1}, -2, i_opts);
-  torch::Tensor d_out_vertex_groups = torch::full({H, W}, -2, i_opts);
+  torch::Tensor d_fast_region = ws.hlp.fast_region_id.request_full({num_cells}, i_opts, -1);
+  
+  // Compute region prefix sums natively on device
+  torch::Tensor region_ids_max = d_max_alive.to(torch::kInt32).cumsum(0, torch::kInt32) - 1;
+  d_fast_region.index_put_({d_crit_maxes.masked_select(d_max_alive)}, region_ids_max.masked_select(d_max_alive));
+
+  torch::Tensor region_ids_min = d_min_alive.to(torch::kInt32).cumsum(0, torch::kInt32) - 1;
+  d_fast_region.index_put_({d_crit_mins.masked_select(d_min_alive)}, region_ids_min.masked_select(d_min_alive));
+
+  // Pre-allocate output on MPS, -2 means unknown
+  torch::Tensor d_out_face_groups = ws.cell_groups.face_groups.request_full({H + 1, W + 1}, i_opts, -2);
+  torch::Tensor d_out_vertex_groups = ws.cell_groups.vertex_groups.request_full({H, W}, i_opts, -2);
   {
     RECORD_FUNCTION("trace_faces", {});
     launch_cell_groups_metal(ws.d_data, gdata.d_paired_with.get(), d_fast_crit_map, d_uf_max_parent, d_crit_maxes,
@@ -174,18 +175,6 @@ void compute_cell_groups(Workspace& ws) {
     RECORD_FUNCTION("trace_vertices", {});
     launch_cell_groups_metal(ws.d_data, gdata.d_paired_with.get(), d_fast_crit_map, d_uf_min_parent, d_crit_mins,
                              d_fast_region, d_out_vertex_groups, H, W, Nx, IS_DUAL, /*trace_faces=*/false);
-  }
-
-  // Bring the result back to CPU memory synchronously
-  {
-    RECORD_FUNCTION("Memcpy_Device_To_Host", {});
-    auto cpu_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
-    torch::Tensor out_face_groups = ws.cell_groups.face_groups.request({H + 1, W + 1}, cpu_opts);
-    torch::Tensor out_vertex_groups = ws.cell_groups.vertex_groups.request({H, W}, cpu_opts);
-
-    // 2. Direct copy (GPU -> Pre-existing CPU RAM)
-    out_face_groups.copy_(d_out_face_groups, /*non_blocking=*/false);
-    out_vertex_groups.copy_(d_out_vertex_groups, /*non_blocking=*/false);
   }
 }
 
@@ -206,7 +195,7 @@ void trace_from_saddles(Workspace& ws) {
 }
 
 template <typename Workspace>
-void trace_raw_arcs_geometry(Workspace& ws, const GradientData& gdata, const int* fast_crit_map,
+void trace_raw_arcs_geometry(Workspace& ws, const GradientData& gdata,
                              const std::vector<int>& max_arcs_len, const std::vector<int>& min_arcs_len) {
   int H = ws.d_data.size(0);
   int W = ws.d_data.size(1);
@@ -215,7 +204,7 @@ void trace_raw_arcs_geometry(Workspace& ws, const GradientData& gdata, const int
   RECORD_FUNCTION("trace_raw_arcs_geometry_gpu", {});
 
   torch::Tensor d_fast_crit_map =
-      torch::from_blob((void*)fast_crit_map, {num_cells}, torch::kInt32).to(torch::kMPS, /*non_blocking=*/true);
+      torch::from_blob((void*)ws.hlp.fast_crit_map.data(), {num_cells}, torch::kInt32).to(torch::kMPS, /*non_blocking=*/true);
 
   auto& out = ws.saddle_nodes;
   int num_saddles = max_arcs_len.size() / 2;
