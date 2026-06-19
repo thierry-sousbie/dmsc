@@ -64,32 +64,40 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
   auto& max_saddles = ws.arcs_topology.sorted_max_saddles;
   auto& min_saddles = ws.arcs_topology.sorted_min_saddles;
   auto& fast_crit_map = ws.hlp.fast_crit_map;
-  auto& crit_max_vals = ws.hlp.crit_max_vals;
-  auto& crit_min_vals = ws.hlp.crit_min_vals;
+  // auto& crit_max_vals = ws.hlp.crit_max_vals;
+  // auto& crit_min_vals = ws.hlp.crit_min_vals;
   auto& saddle_nodes = ws.saddle_nodes;
 
   // arcs geometry computation (ridges and valleys)
   if (trace_arcs) trace_raw_arcs_geometry(ws);
 
-  UnionFind uf_max(crit_maxes.size());
-  UnionFind uf_min(crit_mins.size());
+  // UnionFind uf_max(crit_maxes.size());
+  // UnionFind uf_min(crit_mins.size());
 
-  std::vector<bool> max_alive(crit_maxes.size(), true);
-  std::vector<bool> min_alive(crit_mins.size(), true);
+  // std::vector<bool> max_alive(crit_maxes.size(), true);
+  // std::vector<bool> min_alive(crit_mins.size(), true);
 
-  std::vector<CancelEvent> min_cancellations;
-  std::vector<CancelEvent> max_cancellations;
+  // std::vector<CancelEvent> min_cancellations;
+  // std::vector<CancelEvent> max_cancellations;
 
-  compute_ppairs_and_simplify<IS_DUAL>(persistence_threshold, trace_arcs, fast_crit_map, min_saddles, max_saddles,
-                                       crit_mins, crit_maxes, crit_min_vals, crit_max_vals, min_alive, max_alive,
-                                       uf_min, uf_max, min_cancellations, max_cancellations);
+  // compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs, fast_crit_map, min_saddles,
+  // max_saddles,
+  //                                      crit_mins, crit_maxes, crit_min_vals, crit_max_vals, min_alive, max_alive,
+  //                                      uf_min, uf_max, min_cancellations, max_cancellations);
+  compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs);
+  auto& min_alive = ws.p_data.min_alive;
+  auto& max_alive = ws.p_data.max_alive;
+  auto& uf_min = ws.p_data.uf_min;
+  auto& uf_max = ws.p_data.uf_max;
+  // auto& min_cancellations = ws.p_data.min_cancellations;
+  // auto& max_cancellations = ws.p_data.max_cancellations;
 
   // --- 1-manifolds graph ---
   std::vector<int> ridge_faces, ridge_vertices;
   std::vector<int> ridge_faces_offsets = {0}, ridge_vertices_offsets = {0};
   std::vector<int> arc_faces_offsets, arc_vertices_offsets;
   if (trace_arcs) {
-    simplify_arcs_geometry(ws, min_cancellations, max_cancellations);
+    simplify_arcs_geometry(ws);
     {
       RECORD_FUNCTION("populate_ridges_and_valleys_cpu", {});
 
@@ -125,10 +133,8 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
   }
 
   // --- Compute basins of attraction ---
-  CellGroupsData cell_groups;
-  if (trace_manifolds)
-    cell_groups = compute_cell_groups(paired_with, fast_crit_map, uf_max, crit_maxes, uf_min, crit_mins, max_alive,
-                                      min_alive, H, W);
+  if (trace_manifolds) compute_cell_groups(ws);
+  auto& cell_groups = ws.cell_groups;
 
   // --- Generate formatted ouptut data ---
   std::vector<int> final_maxes, final_mins, final_sads;
@@ -301,13 +307,13 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
       result.ppairs_min = t_ppairs_max;
 
       // In Dual, Maxima are Vertices, so Ascending Ridges are Vertex paths
-      result.peaks = cell_groups.vertex_groups;
+      result.peaks = cell_groups.vertex_groups.get();
       result.ridges = t_ridge_vertices;
       result.ridge_offsets = t_ridge_vertices_off;
       result.ridge_arc_offsets = t_arc_vertices_off;
 
       // In Dual, Minima are Faces, so Descending Trenches are Face paths
-      result.basins = cell_groups.face_groups;
+      result.basins = cell_groups.face_groups.get();
       result.valleys = t_ridge_faces;
       result.valley_offsets = t_ridge_faces_off;
       result.valley_arc_offsets = t_arc_faces_off;
@@ -324,13 +330,13 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
       result.ppairs_min = t_ppairs_min;
 
       // In Primal, Maxima are Faces, so Ascending Ridges are Face paths
-      result.peaks = cell_groups.face_groups;
+      result.peaks = cell_groups.face_groups.get();
       result.ridges = t_ridge_faces;
       result.ridge_offsets = t_ridge_faces_off;
       result.ridge_arc_offsets = t_arc_faces_off;
 
       // In Primal, Minima are Vertices, so Descending Trenches are Vertex paths
-      result.basins = cell_groups.vertex_groups;
+      result.basins = cell_groups.vertex_groups.get();
       result.valleys = t_ridge_vertices;
       result.valley_offsets = t_ridge_vertices_off;
       result.valley_arc_offsets = t_arc_vertices_off;

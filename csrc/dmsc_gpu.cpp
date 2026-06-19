@@ -76,19 +76,23 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
   std::vector<int>& crit_maxes = gradient_data.cp.maxes;
 
   // --- PHASE 2: PARALLEL PATH TRACING ---
-  int num_saddles = crit_saddles.size();
-  auto arcs_topology = gpu::trace_from_saddles<IS_DUAL>(gradient_data, num_saddles, H, W, Nx);
-  std::vector<SadEvent>& max_saddles = arcs_topology.sorted_max_saddles;
-  std::vector<SadEvent>& min_saddles = arcs_topology.sorted_min_saddles;
+  gpu::trace_from_saddles<IS_DUAL>(ws);
+  auto& arcs_topology = ws.arcs_topology;
+  auto& max_saddles = arcs_topology.sorted_max_saddles;
+  auto& min_saddles = arcs_topology.sorted_min_saddles;
 
   // Ensure the image data is strictly on the CPU for the Phase 2/3 value lookups
   active_field = active_field.cpu().contiguous();
   const float* data = active_field.data_ptr<float>();
 
   // Pre-calculate mappings for faster access
-  std::vector<float> crit_min_vals(crit_mins.size());
-  std::vector<float> crit_maxes_vals(crit_maxes.size());
-  std::vector<int> fast_crit_map(num_cells, -1);
+  std::vector<float>& crit_min_vals = ws.hlp.crit_min_vals;
+  std::vector<float>& crit_max_vals = ws.hlp.crit_max_vals;
+  std::vector<int>& fast_crit_map = ws.hlp.fast_crit_map;
+  crit_min_vals.resize(crit_mins.size());
+  crit_max_vals.resize(crit_maxes.size());
+  fast_crit_map.assign(num_cells, -1);
+
   // --- MS-complex, persistence pairs and simplification ---
   {
     RECORD_FUNCTION("persistence_preproc_cpu1", {});
@@ -96,7 +100,7 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
         [&]() {
           for (size_t i = 0; i < crit_maxes.size(); ++i) {
             fast_crit_map[crit_maxes[i]] = i;
-            crit_maxes_vals[i] = cell_value<IS_DUAL>(3, get_y(crit_maxes[i], Nx), get_x(crit_maxes[i], Nx), H, W, data);
+            crit_max_vals[i] = cell_value<IS_DUAL>(3, get_y(crit_maxes[i], Nx), get_x(crit_maxes[i], Nx), H, W, data);
           }
         },
         [&]() {
@@ -141,22 +145,29 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
                                  arcs_topology.min_arcs_len);
   }
 
-  UnionFind uf_max(crit_maxes.size());
-  UnionFind uf_min(crit_mins.size());
-  std::vector<bool> max_alive(crit_maxes.size(), true);
-  std::vector<bool> min_alive(crit_mins.size(), true);
-  std::vector<CancelEvent> min_cancellations;
-  std::vector<CancelEvent> max_cancellations;
+  // UnionFind uf_max(crit_maxes.size());
+  // UnionFind uf_min(crit_mins.size());
+  // std::vector<bool> max_alive(crit_maxes.size(), true);
+  // std::vector<bool> min_alive(crit_mins.size(), true);
+  // std::vector<CancelEvent> min_cancellations;
+  // std::vector<CancelEvent> max_cancellations;
 
-  compute_ppairs_and_simplify<IS_DUAL>(persistence_threshold, trace_arcs, fast_crit_map, min_saddles, max_saddles,
-                                       crit_mins, crit_maxes, crit_min_vals, crit_maxes_vals, min_alive, max_alive,
-                                       uf_min, uf_max, min_cancellations, max_cancellations);
+  // compute_ppairs_and_simplify<IS_DUAL>(persistence_threshold, trace_arcs, fast_crit_map, min_saddles, max_saddles,
+  //                                      crit_mins, crit_maxes, crit_min_vals, crit_maxes_vals, min_alive, max_alive,
+  //                                      uf_min, uf_max, min_cancellations, max_cancellations);
+  compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs);
+  auto& min_alive = ws.p_data.min_alive;
+  auto& max_alive = ws.p_data.max_alive;
+  auto& uf_min = ws.p_data.uf_min;
+  auto& uf_max = ws.p_data.uf_max;
+  auto& min_cancellations = ws.p_data.min_cancellations;
+  auto& max_cancellations = ws.p_data.max_cancellations;
 
   // --- 1-manifolds graph ---
   if (trace_arcs) {
     // simplify_arcs_geometry(ws, saddle_nodes, crit_maxes.size(), crit_mins.size(), min_cancellations,
     // max_cancellations);
-    ::simplify_arcs_geometry(ws, min_cancellations, max_cancellations);
+    ::simplify_arcs_geometry(ws);
   }
 
   // --- Compute basins of attraction ---

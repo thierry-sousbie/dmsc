@@ -18,5 +18,7 @@ struct GradientData {
   torch::Tensor d_data;
   torch::Tensor d_paired_with;
   torch::Tensor d_saddles;
+
+  void reset() {}
 };
 }  // namespace gpu

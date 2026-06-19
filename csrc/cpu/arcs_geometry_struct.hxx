@@ -30,17 +30,17 @@ struct SaddleNodes {
 };
 
 // Priority Queue Event for Physical Simplification
-struct CancelEvent {
-  int saddle_id;  // Dense cell ID of the saddle
-  int s_idx;      // saddle index in the saddle list
-  int target_id;  // Dense cell ID of the extremum target
-  int t_idx;      // target index in the extremum list
-  float persistence;
-  bool is_max;  // True if this cancels a maximum, False if minimum
+// struct CancelEvent {
+//   int saddle_id;  // Dense cell ID of the saddle
+//   int s_idx;      // saddle index in the saddle list
+//   int target_id;  // Dense cell ID of the extremum target
+//   int t_idx;      // target index in the extremum list
+//   float persistence;
+//   bool is_max;  // True if this cancels a maximum, False if minimum
 
-  bool operator<(const CancelEvent& other) const {
-    if (persistence != other.persistence) return persistence < other.persistence;
-    if (saddle_id != other.saddle_id) return saddle_id < other.saddle_id;
-    return target_id < other.target_id;
-  }
-};
+//   bool operator<(const CancelEvent& other) const {
+//     if (persistence != other.persistence) return persistence < other.persistence;
+//     if (saddle_id != other.saddle_id) return saddle_id < other.saddle_id;
+//     return target_id < other.target_id;
+//   }
+// };

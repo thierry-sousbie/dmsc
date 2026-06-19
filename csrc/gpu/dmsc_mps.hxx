@@ -9,9 +9,9 @@
 #include <chrono>
 #include <iostream>
 
-#include "../cpu/arcs_simplification.hxx"
+// #include "../cpu/arcs_simplification.hxx"
 #include "./arcs_simplification_struct.hxx"
-#include "./gradient_struct.hxx"
+// #include "./gradient_struct.hxx"
 #include "./trace_saddles_helpers.hxx"
 
 namespace gpu {
@@ -147,18 +147,22 @@ void compute_cell_groups(const GradientData& gdata, const int* fast_crit_map, co
 }
 
 // NOTE: trace_from_saddles now accepts GradientData by reference so it can access the MPS tensors
-template <bool IS_DUAL = false>
-TracedSaddlesVectors trace_from_saddles(const GradientData& gdata, int saddles_count, int H, int W, int Nx) {
+template <bool IS_DUAL = false, typename Workspace>
+void trace_from_saddles(Workspace& ws) {
   RECORD_FUNCTION("trace_from_saddles", {});
+  int H = ws.H;
+  int W = ws.W;
+  int Nx = ws.Nx;
+  int saddles_count = ws.gradient_data.cp.saddles.size();
 
-  // auto traced_saddles_tensors = launch_trace_from_saddles_metal(gdata.d_data, gdata.d_paired_with, gdata.d_saddles,
+  // auto traced_saddles_tensors = launch_trace_from_saddles_metal(gdata.d_data, gdata.d_paired_with,
+  // gdata.d_saddles,
   //                                                               saddles_count, H, W, Nx, IS_DUAL);
-  auto traced_saddles_tensors = launch_trace_from_saddles_metal(gdata.d_data, gdata.d_paired_with, gdata.d_saddles,
-                                                                saddles_count, H, W, Nx, IS_DUAL);
+  auto traced_saddles_tensors =
+      launch_trace_from_saddles_metal(ws.gradient_data.d_data, ws.gradient_data.d_paired_with,
+                                      ws.gradient_data.d_saddles, saddles_count, H, W, Nx, IS_DUAL);
 
-  TracedSaddlesVectors traced_saddles_vectors = tensors_to_sad_events<IS_DUAL>(traced_saddles_tensors, Nx);
-
-  return traced_saddles_vectors;
+  ws.arcs_topology = tensors_to_sad_events<IS_DUAL>(traced_saddles_tensors, Nx);
 }
 
 template <typename Workspace>

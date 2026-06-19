@@ -253,9 +253,10 @@ void assemble_simplified_geometry(Workspace& ws, SaddleNodes& sn, const std::vec
 }
 
 template <typename Workspace>
-void simplify_arcs_geometry(Workspace& ws, std::vector<CancelEvent>& min_cancellations,
-                            std::vector<CancelEvent>& max_cancellations) {
+void simplify_arcs_geometry(Workspace& ws) {
   RECORD_FUNCTION("simplify_arcs_geometry_flat", {});
+  auto& min_cancellations = ws.p_data.min_cancellations;
+  auto& max_cancellations = ws.p_data.max_cancellations;
   auto& sn = ws.saddle_nodes;
   int num_saddles = sn.nodes.size();
   int N2 = num_saddles * 2;

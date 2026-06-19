@@ -1,13 +1,18 @@
 #pragma once
 
+#include <numeric>
 #include <vector>
 
 struct UnionFind {
   std::vector<int> parent;
 
-  UnionFind(int n) {
+  UnionFind(int n = 0) {
+    reset(n);
+  }
+
+  void reset(int n) {
     parent.resize(n);
-    for (int i = 0; i < n; ++i) parent[i] = i;
+    std::iota(parent.begin(), parent.end(), 0);
   }
 
   int find(int i) {

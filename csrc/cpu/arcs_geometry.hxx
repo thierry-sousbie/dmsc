@@ -12,7 +12,7 @@
 #include "./arcs_geometry_struct.hxx"
 
 template <typename Workspace>
-SaddleNodes trace_raw_arcs_geometry(Workspace& ws) {
+void trace_raw_arcs_geometry(Workspace& ws) {
   RECORD_FUNCTION("trace_raw_arcs_geometry_flat", {});
   int H = ws.H;
   int W = ws.W;
@@ -27,7 +27,7 @@ SaddleNodes trace_raw_arcs_geometry(Workspace& ws) {
   auto& saddle_nodes = ws.saddle_nodes;
   // SaddleNodes saddle_nodes;
   int num_saddles = crit_saddles.size();
-  if (num_saddles == 0) return saddle_nodes;
+  if (num_saddles == 0) return;
 
   saddle_nodes.nodes.resize(num_saddles);
 
@@ -150,6 +150,4 @@ SaddleNodes trace_raw_arcs_geometry(Workspace& ws) {
       if (v2 != -1) trace_geometry_vertex(v2, valid_min_count++);
     }
   });
-
-  return saddle_nodes;
 }

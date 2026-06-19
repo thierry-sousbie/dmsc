@@ -2,7 +2,11 @@
 
 #include <torch/extension.h>
 
+#include "../managed_tensor.hxx"
+
 struct CellGroupsData {
-  torch::Tensor vertex_groups;  // size = {H, W}
-  torch::Tensor face_groups;    // size = {H+1, W+1}
+  ManagedTensor vertex_groups;  // size = {H, W}
+  ManagedTensor face_groups;    // size = {H+1, W+1}
+
+  void reset() {}
 };

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "../cell_complex.hxx"
+#include "../cpu/arcs_topology_struct.hxx"
 
 namespace gpu {
 // Exactly as defined in metal/metal_backend.mm
@@ -24,12 +25,12 @@ struct TracedSaddlesTensors {
   torch::Tensor min_len;
 };
 
-struct TracedSaddlesVectors {
-  std::vector<SadEvent> sorted_max_saddles;
-  std::vector<SadEvent> sorted_min_saddles;
-  std::vector<int> max_arcs_len;
-  std::vector<int> min_arcs_len;
-};
+// struct TracedSaddlesVectors {
+//   std::vector<SadEvent> sorted_max_saddles;
+//   std::vector<SadEvent> sorted_min_saddles;
+//   std::vector<int> max_arcs_len;
+//   std::vector<int> min_arcs_len;
+// };
 
 // IMPORTANT: The simulation of simplicity convention here is exactly the same as the one defined in
 // SadEventLess{} / SadEventGreater{} when descending is True / False.
@@ -57,8 +58,8 @@ torch::Tensor get_packed_sort_indices(const torch::Tensor& s_vals, const torch::
 }
 
 template <bool IS_DUAL = false>
-inline TracedSaddlesVectors tensors_to_sad_events(const TracedSaddlesTensors& tensors, int Nx) {
-  TracedSaddlesVectors out;
+inline ArcsTopology tensors_to_sad_events(const TracedSaddlesTensors& tensors, int Nx) {
+  ArcsTopology out;
   RECORD_FUNCTION("tensors_to_sad_events", {});
   if (!tensors.saddles.defined() || tensors.saddles.numel() == 0) {
     return out;

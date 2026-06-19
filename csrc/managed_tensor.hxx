@@ -1,4 +1,5 @@
 #pragma once
+#include <torch/extension.h>
 #include <torch/torch.h>
 
 #include <algorithm>
@@ -30,6 +31,7 @@ class ManagedTensor {
 
   // Request a tensor, providing the shape and options dynamically.
   torch::Tensor request(c10::IntArrayRef shape, torch::TensorOptions options) {
+    RECORD_FUNCTION("managed_tensor_request", {});
     int64_t required_elements = 1;
     for (auto dim : shape) {
       required_elements *= dim;
@@ -67,6 +69,16 @@ class ManagedTensor {
     return active_tensor;
   }
 
+  // Request a tensor and initialize it to a specific value as fast as possible (equivalent to torch::full)
+  torch::Tensor request_full(c10::IntArrayRef shape, torch::TensorOptions options, c10::Scalar fill_value) {
+    RECORD_FUNCTION("managed_tensor_request_full", {});
+    torch::Tensor t = request(shape, options);
+    if (t.numel() > 0) {
+      t.fill_(fill_value);
+    }
+    return t;
+  }
+
   // Get the tensor exactly as it was last requested (same shape and size)
   torch::Tensor get() const {
     if (!active_tensor.defined()) {
@@ -76,6 +88,7 @@ class ManagedTensor {
   }
 
   torch::Tensor copy_from_tensor(const torch::Tensor& src, torch::TensorOptions dest_options) {
+    RECORD_FUNCTION("managed_tensor_copy_from_tensor", {});
     if (debug_mode && src.device() != dest_options.device()) {
       std::cout << "[ManagedTensor] Warning: Cross-device transfer for '" << tensor_name << "' from " << src.device()
                 << " to " << dest_options.device() << ".\n";
@@ -93,6 +106,7 @@ class ManagedTensor {
 
   // Convenience method: Copies a raw CPU pointer into a properly sized device tensor
   torch::Tensor copy_from_cpu_ptr(void* data, c10::IntArrayRef shape, torch::TensorOptions options) {
+    RECORD_FUNCTION("managed_tensor_copy_from_cpu_ptr", {});
     torch::TensorOptions cpu_options = options.device(torch::kCPU);
     torch::Tensor cpu_view = torch::from_blob(data, shape, cpu_options);
     torch::Tensor device_tensor = request(shape, options);
