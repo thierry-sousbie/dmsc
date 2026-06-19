@@ -73,14 +73,14 @@ void compute_gradient(Workspace& ws, torch::Tensor& active_field) {
   int num_cells = 4 * (H + 1) * (W + 1);
 
   // 1. Allocate PyTorch Tensors on MPS
-  torch::Tensor d_data = active_field.to(torch::kMPS).contiguous();
-  torch::Tensor d_paired_with =
-      torch::empty({num_cells}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS));
+  ws.d_data = active_field.to(torch::kMPS).contiguous();
+  auto opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS);
+  torch::Tensor d_paired_with = ws.gradient_data.d_paired_with.request_full({num_cells}, opts, -1);
 
   // 2. Dispatch
   {
     RECORD_FUNCTION("KERNEL_GRADIENT", {});
-    launch_gradient_metal(d_data, d_paired_with, H, W, IS_DUAL);
+    launch_gradient_metal(ws.d_data, d_paired_with, H, W, IS_DUAL);
   }
   // 3. Copy paired_with back to CPU (Needed for Phase 3 simplification)
   torch::Tensor cpu_paired = d_paired_with.cpu();
@@ -95,7 +95,10 @@ void compute_gradient(Workspace& ws, torch::Tensor& active_field) {
   for (size_t i = 0; i < cp.mins.size(); ++i) fast_crit_map[cp.mins[i]] = i;
   for (size_t i = 0; i < cp.saddles.size(); ++i) fast_crit_map[cp.saddles[i]] = i;
 
-  ws.gradient_data = {std::move(cp), std::move(paired_with), d_data, d_paired_with, cpt.saddles};
+  ws.gradient_data.d_saddles.copy_from_tensor(cpt.saddles, opts);
+
+  ws.gradient_data.cp = std::move(cp);
+  ws.gradient_data.paired_with = std::move(paired_with);
 }
 
 template <bool IS_DUAL = false, typename Workspace>
@@ -164,12 +167,12 @@ void compute_cell_groups(Workspace& ws) {
   torch::Tensor d_out_vertex_groups = torch::full({H, W}, -2, i_opts);
   {
     RECORD_FUNCTION("trace_faces", {});
-    launch_cell_groups_metal(gdata.d_data, gdata.d_paired_with, d_fast_crit_map, d_uf_max_parent, d_crit_maxes,
+    launch_cell_groups_metal(ws.d_data, gdata.d_paired_with.get(), d_fast_crit_map, d_uf_max_parent, d_crit_maxes,
                              d_fast_region, d_out_face_groups, H, W, Nx, IS_DUAL, /*trace_faces=*/true);
   }
   {
     RECORD_FUNCTION("trace_vertices", {});
-    launch_cell_groups_metal(gdata.d_data, gdata.d_paired_with, d_fast_crit_map, d_uf_min_parent, d_crit_mins,
+    launch_cell_groups_metal(ws.d_data, gdata.d_paired_with.get(), d_fast_crit_map, d_uf_min_parent, d_crit_mins,
                              d_fast_region, d_out_vertex_groups, H, W, Nx, IS_DUAL, /*trace_faces=*/false);
   }
 
@@ -195,12 +198,9 @@ void trace_from_saddles(Workspace& ws) {
   int Nx = ws.Nx;
   int saddles_count = ws.gradient_data.cp.saddles.size();
 
-  // auto traced_saddles_tensors = launch_trace_from_saddles_metal(gdata.d_data, gdata.d_paired_with,
-  // gdata.d_saddles,
-  //                                                               saddles_count, H, W, Nx, IS_DUAL);
   auto traced_saddles_tensors =
-      launch_trace_from_saddles_metal(ws.gradient_data.d_data, ws.gradient_data.d_paired_with,
-                                      ws.gradient_data.d_saddles, saddles_count, H, W, Nx, IS_DUAL);
+      launch_trace_from_saddles_metal(ws.d_data, ws.gradient_data.d_paired_with.get(),
+                                      ws.gradient_data.d_saddles.get(), saddles_count, H, W, Nx, IS_DUAL);
 
   ws.arcs_topology = tensors_to_sad_events<IS_DUAL>(traced_saddles_tensors, Nx);
 }
@@ -208,8 +208,8 @@ void trace_from_saddles(Workspace& ws) {
 template <typename Workspace>
 void trace_raw_arcs_geometry(Workspace& ws, const GradientData& gdata, const int* fast_crit_map,
                              const std::vector<int>& max_arcs_len, const std::vector<int>& min_arcs_len) {
-  int H = gdata.d_data.size(0);
-  int W = gdata.d_data.size(1);
+  int H = ws.d_data.size(0);
+  int W = ws.d_data.size(1);
   int Nx = W + 1;
   int num_cells = 4 * (H + 1) * (W + 1);
   RECORD_FUNCTION("trace_raw_arcs_geometry_gpu", {});
@@ -249,7 +249,7 @@ void trace_raw_arcs_geometry(Workspace& ws, const GradientData& gdata, const int
 
   {
     RECORD_FUNCTION("kernel", {});
-    launch_trace_raw_arcs_geometry_metal(gdata.d_paired_with, d_fast_crit_map, gdata.d_saddles, d_max_offsets,
+    launch_trace_raw_arcs_geometry_metal(gdata.d_paired_with.get(), d_fast_crit_map, gdata.d_saddles.get(), d_max_offsets,
                                          d_min_offsets, d_flat_max, d_flat_min, d_saddle_nodes, H, W, Nx, num_saddles);
   }
 

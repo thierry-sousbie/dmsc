@@ -1,12 +1,12 @@
 #pragma once
 
+#include <tbb/parallel_invoke.h>
+
 #include <cstring>
 #include <vector>
 
-#include <tbb/parallel_invoke.h>
-
-#include "../cpu/persistence_struct.hxx"
 #include "../cpu/cell_groups_struct.hxx"
+#include "../cpu/persistence_struct.hxx"
 #include "../dmsc_struct.hxx"
 #include "../managed_tensor.hxx"
 #include "./arcs_geometry_struct.hxx"
@@ -67,10 +67,10 @@ struct WSHelpers {
         out_arc_vertices_off("out_arc_vertices_off", false) {}
 
   void reset() {
-    fast_crit_map.clear();
-    safe_crit_map.clear();
-    crit_min_vals.clear();
-    crit_max_vals.clear();
+    // fast_crit_map.clear();
+    // safe_crit_map.clear();
+    // crit_min_vals.clear();
+    // crit_max_vals.clear();
   }
 };
 
@@ -82,6 +82,7 @@ struct Workspace {
 
   WSHelpers hlp;
 
+  torch::Tensor d_data;  // hold a copy of the input scalar field
   gpu::GradientData gradient_data;
   gpu::ArcsTopology arcs_topology;
   gpu::SaddleNodes saddle_nodes;
@@ -253,8 +254,10 @@ struct Workspace {
             int* out_ridge_faces_off = hlp.out_ridge_faces_off.request({num_arcs + 1}, opts_i).template data_ptr<int>();
             int* out_arc_faces_off = hlp.out_arc_faces_off.request({num_arcs}, opts_i).template data_ptr<int>();
 
-            int* out_ridge_vertices = hlp.out_ridge_vertices.request({num_ridge_vertices}, opts_i).template data_ptr<int>();
-            int* out_ridge_vertices_off = hlp.out_ridge_vertices_off.request({num_arcs + 1}, opts_i).template data_ptr<int>();
+            int* out_ridge_vertices =
+                hlp.out_ridge_vertices.request({num_ridge_vertices}, opts_i).template data_ptr<int>();
+            int* out_ridge_vertices_off =
+                hlp.out_ridge_vertices_off.request({num_arcs + 1}, opts_i).template data_ptr<int>();
             int* out_arc_vertices_off = hlp.out_arc_vertices_off.request({num_arcs}, opts_i).template data_ptr<int>();
 
             // Flatten geometric arcs continuously in memory and track array offsets
@@ -303,9 +306,12 @@ struct Workspace {
     result.shape.template accessor<int32_t, 1>()[0] = H;
     result.shape.template accessor<int32_t, 1>()[1] = W;
 
-    result.sad_pts = hlp.out_sad_pts.get().clone(); // Need clone for batch isolation! Same as CPU. Wait, did I use clone in CPU?
-    // Wait, let's look at CPU. I didn't use clone on CPU, but I sliced! 
-    result.grad_indices = return_gradient ? hlp.out_grad.copy_from_cpu_ptr(gradient_data.paired_with.data(), {num_cells}, opts_i).clone() : torch::empty({0}, opts_i);
+    result.sad_pts =
+        hlp.out_sad_pts.get().clone();  // Need clone for batch isolation! Same as CPU. Wait, did I use clone in CPU?
+    // Wait, let's look at CPU. I didn't use clone on CPU, but I sliced!
+    result.grad_indices =
+        return_gradient ? hlp.out_grad.copy_from_cpu_ptr(gradient_data.paired_with.data(), {num_cells}, opts_i).clone()
+                        : torch::empty({0}, opts_i);
 
     auto t_max = hlp.out_max_pts.get().slice(0, 0, max_count).clone();
     auto t_min = hlp.out_min_pts.get().slice(0, 0, min_count).clone();

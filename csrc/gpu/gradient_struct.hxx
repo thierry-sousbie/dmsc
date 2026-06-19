@@ -15,9 +15,10 @@ struct GradientData {
   std::vector<int> paired_with;
 
   // Handles for GPU memory. keep data between calls so we don t need to reallocate
-  torch::Tensor d_data;
-  torch::Tensor d_paired_with;
-  torch::Tensor d_saddles;
+  ManagedTensor d_paired_with;
+  ManagedTensor d_saddles;
+
+  GradientData() : d_paired_with("d_paired_with", false), d_saddles("d_saddles", false) {}
 
   void reset() {}
 };
