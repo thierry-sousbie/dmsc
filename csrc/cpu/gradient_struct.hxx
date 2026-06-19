@@ -11,8 +11,8 @@ struct GradientData {
   std::vector<int> paired_with;
 
   void reset() {
-    cp.reset();
-    paired_with.clear();
+    // cp.reset();
+    // paired_with.clear();
   }
 };
 

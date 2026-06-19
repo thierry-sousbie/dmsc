@@ -24,10 +24,10 @@ struct WSHelpers {
   WSHelpers() : temp_flat_max("temp_flat_max", false), temp_flat_min("temp_flat_min", false) {}
 
   void reset() {
-    fast_crit_map.clear();
-    safe_crit_map.clear();
-    crit_min_vals.clear();
-    crit_max_vals.clear();
+    // fast_crit_map.clear();
+    // safe_crit_map.clear();
+    // crit_min_vals.clear();
+    // crit_max_vals.clear();
   }
 };
 struct Workspace {

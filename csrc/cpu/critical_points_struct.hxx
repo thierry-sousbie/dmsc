@@ -10,9 +10,9 @@ struct CriticalPoints {
   std::vector<int> mins;
 
   void reset() {
-    maxes.clear();
-    saddles.clear();
-    mins.clear();
+    // maxes.clear();
+    // saddles.clear();
+    // mins.clear();
   }
 };
 

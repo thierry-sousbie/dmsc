@@ -67,10 +67,10 @@ struct WSHelpers {
         out_arc_vertices_off("out_arc_vertices_off", false) {}
 
   void reset() {
-    fast_crit_map.clear();
-    safe_crit_map.clear();
-    crit_min_vals.clear();
-    crit_max_vals.clear();
+    // fast_crit_map.clear();
+    // safe_crit_map.clear();
+    // crit_min_vals.clear();
+    // crit_max_vals.clear();
   }
 };
 

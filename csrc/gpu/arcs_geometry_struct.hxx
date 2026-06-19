@@ -26,7 +26,7 @@ struct SaddleNodes {
   ManagedTensor flat_min_geom;
 
   void reset() {
-    nodes.clear();
+    // nodes.clear();
   }
 };
 }  // namespace gpu

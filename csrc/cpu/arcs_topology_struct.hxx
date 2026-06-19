@@ -39,10 +39,10 @@ struct ArcsTopology {
   std::vector<SadEvent> sorted_min_saddles;
 
   void reset() {
-    max_arcs_len.clear();
-    min_arcs_len.clear();
-    sorted_max_saddles.clear();
-    sorted_min_saddles.clear();
+    // max_arcs_len.clear();
+    // min_arcs_len.clear();
+    // sorted_max_saddles.clear();
+    // sorted_min_saddles.clear();
   }
 };
 
