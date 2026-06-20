@@ -47,7 +47,7 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
                                      bool return_gradient, bool trace_arcs, bool trace_manifolds, cpu::Workspace& ws) {
   int H = ws.H;
   int W = ws.W;
-  int num_cells = ws.num_cells;
+  // int num_cells = ws.num_cells;
   ws.reset();
 
   tbb::global_control control(tbb::global_control::max_allowed_parallelism, at::get_num_threads());

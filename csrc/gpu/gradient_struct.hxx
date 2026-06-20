@@ -3,11 +3,19 @@
 
 #include <vector>
 
+#include "../managed_tensor.hxx"
+
 namespace gpu {
 struct CriticalPoints {
   std::vector<int> maxes;
   std::vector<int> saddles;
   std::vector<int> mins;
+};
+
+struct CriticalPointsAsTensors {
+  torch::Tensor maxes;
+  torch::Tensor saddles;
+  torch::Tensor mins;
 };
 
 struct GradientData {

@@ -46,11 +46,6 @@ vertices/edges/faces reversed, i.e. they represent maxima/saddles/minima respect
 template <bool IS_DUAL = false>
 DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persistence_threshold, int block_size,
                                      bool return_gradient, bool trace_arcs, bool trace_manifolds, gpu::Workspace& ws) {
-  int H = scalar_field.size(0);
-  int W = scalar_field.size(1);
-  int Nx = W + 1;
-  int num_cells = 4 * (H + 1) * (W + 1);
-
   if (scalar_field.device().is_cuda()) {
 #ifdef __APPLE__
     throw std::runtime_error("Extension was not compiled with CUDA support.");
@@ -66,118 +61,16 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
 
   tbb::global_control control(tbb::global_control::max_allowed_parallelism, at::get_num_threads());
 
-  // --- DISCRETE GRADIENT ---
-  torch::Tensor active_field = scalar_field;
-  gpu::compute_gradient<IS_DUAL>(ws, active_field);
-  auto& gradient_data = ws.gradient_data;
-  // --- PATH TRACING ---
-  // We could move because using a reference seems to slow the compiler optimization a bit later on
-  // but this is meant to be removed after clean up anyways ...
-  std::vector<int>& paired_with = gradient_data.paired_with;
-  std::vector<int>& crit_saddles = gradient_data.cp.saddles;
-  std::vector<int>& crit_mins = gradient_data.cp.mins;
-  std::vector<int>& crit_maxes = gradient_data.cp.maxes;
+  gpu::compute_gradient<IS_DUAL>(ws, scalar_field);
 
-  // --- PHASE 2: PARALLEL PATH TRACING ---
   gpu::trace_from_saddles<IS_DUAL>(ws);
-  auto& arcs_topology = ws.arcs_topology;
-  auto& max_saddles = arcs_topology.sorted_max_saddles;
-  auto& min_saddles = arcs_topology.sorted_min_saddles;
+  if (trace_arcs) gpu::trace_raw_arcs_geometry(ws);
 
-  // Ensure the image data is strictly on the CPU for the Phase 2/3 value lookups
-  active_field = active_field.cpu().contiguous();
-  const float* data = active_field.data_ptr<float>();
-
-  // Pre-calculate mappings for faster access
-  std::vector<float>& crit_min_vals = ws.hlp.crit_min_vals;
-  std::vector<float>& crit_max_vals = ws.hlp.crit_max_vals;
-  std::vector<int>& fast_crit_map = ws.hlp.fast_crit_map;
-  crit_min_vals.resize(crit_mins.size());
-  crit_max_vals.resize(crit_maxes.size());
-  fast_crit_map.assign(num_cells, -1);
-
-  // --- MS-complex, persistence pairs and simplification ---
-  {
-    RECORD_FUNCTION("persistence_preproc_cpu1", {});
-    tbb::parallel_invoke(
-        [&]() {
-          for (size_t i = 0; i < crit_maxes.size(); ++i) {
-            fast_crit_map[crit_maxes[i]] = i;
-            crit_max_vals[i] =
-                cpu::cell_value<IS_DUAL>(3, get_y(crit_maxes[i], Nx), get_x(crit_maxes[i], Nx), H, W, data);
-          }
-        },
-        [&]() {
-          for (size_t i = 0; i < crit_mins.size(); ++i) {
-            fast_crit_map[crit_mins[i]] = i;
-            crit_min_vals[i] =
-                cpu::cell_value<IS_DUAL>(0, get_y(crit_mins[i], Nx), get_x(crit_mins[i], Nx), H, W, data);
-          }
-        },
-        [&]() {
-          for (size_t i = 0; i < crit_saddles.size(); ++i) {
-            fast_crit_map[crit_saddles[i]] = i;
-          }
-        });
-  }
-  {
-    RECORD_FUNCTION("persistence_preproc_cpu2", {});
-    // localize the mapping to the structure for cache, making the persistence thresholding loop faster
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, min_saddles.size(), 1024),
-                      [&](const tbb::blocked_range<size_t>& r) {
-                        for (size_t i = r.begin(); i != r.end(); ++i) {
-                          auto& ev = min_saddles[i];
-                          ev.c1_mid = (ev.c1_id != -1) ? fast_crit_map[ev.c1_id] : -1;
-                          ev.c2_mid = (ev.c2_id != -1) ? fast_crit_map[ev.c2_id] : -1;
-                        }
-                      });
-
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, max_saddles.size(), 1024),
-                      [&](const tbb::blocked_range<size_t>& r) {
-                        for (size_t i = r.begin(); i != r.end(); ++i) {
-                          auto& ev = max_saddles[i];
-                          ev.c1_mid = (ev.c1_id != -1) ? fast_crit_map[ev.c1_id] : -1;
-                          ev.c2_mid = (ev.c2_id != -1) ? fast_crit_map[ev.c2_id] : -1;
-                        }
-                      });
-  }
-
-  // arcs geometry computation (ridges and valleys)
-  // SaddleNodes saddle_nodes;  // arcs incident to saddle points
-  auto& saddle_nodes = ws.saddle_nodes;
-  if (trace_arcs) {
-    gpu::trace_raw_arcs_geometry(ws, gradient_data, arcs_topology.max_arcs_len, arcs_topology.min_arcs_len);
-  }
-
-  // UnionFind uf_max(crit_maxes.size());
-  // UnionFind uf_min(crit_mins.size());
-  // std::vector<bool> max_alive(crit_maxes.size(), true);
-  // std::vector<bool> min_alive(crit_mins.size(), true);
-  // std::vector<CancelEvent> min_cancellations;
-  // std::vector<CancelEvent> max_cancellations;
-
-  // compute_ppairs_and_simplify<IS_DUAL>(persistence_threshold, trace_arcs, fast_crit_map, min_saddles, max_saddles,
-  //                                      crit_mins, crit_maxes, crit_min_vals, crit_maxes_vals, min_alive, max_alive,
-  //                                      uf_min, uf_max, min_cancellations, max_cancellations);
   cpu::compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs);
-  auto& min_alive = ws.p_data.min_alive;
-  auto& max_alive = ws.p_data.max_alive;
-  auto& uf_min = ws.p_data.uf_min;
-  auto& uf_max = ws.p_data.uf_max;
-  // auto& min_cancellations = ws.p_data.min_cancellations;
-  // auto& max_cancellations = ws.p_data.max_cancellations;
 
-  // --- 1-manifolds graph ---
-  if (trace_arcs) {
-    // simplify_arcs_geometry(ws, saddle_nodes, crit_maxes.size(), crit_mins.size(), min_cancellations,
-    // max_cancellations);
-    cpu::simplify_arcs_geometry(ws);
-  }
+  if (trace_arcs) cpu::simplify_arcs_geometry(ws);
 
-  // --- Compute basins of attraction ---
-  if (trace_manifolds) {
-    gpu::compute_cell_groups<IS_DUAL>(ws);
-  }
+  if (trace_manifolds) gpu::compute_cell_groups<IS_DUAL>(ws);
 
   return ws.complex<IS_DUAL>(return_gradient, trace_arcs);
 }

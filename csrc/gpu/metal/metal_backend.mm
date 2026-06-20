@@ -8,6 +8,8 @@
 #include <ATen/mps/MPSAllocator.h>
 #include <ATen/mps/MPSStream.h>
 
+#include "../gradient_struct.hxx"
+
 #include "arcs_simplification_metal.h"
 #include "cell_groups_metal.h"
 #include "critical_points_metal.h"
@@ -25,12 +27,6 @@ struct Constants {
   int W;
   int Nx;
   int num_saddles;
-};
-
-struct CriticalPointsAsTensors {
-  torch::Tensor mins;
-  torch::Tensor saddles;
-  torch::Tensor maxes;
 };
 
 struct TracedSaddlesTensors {
@@ -231,8 +227,7 @@ void launch_gradient_metal(torch::Tensor d_data, torch::Tensor d_paired_with, in
 // ==========================================
 // PHASE 1.5: Extract critical points
 // ==========================================
-CriticalPointsAsTensors launch_extract_critical_points_metal(torch::Tensor d_paired_with, int H, int W, int Nx,
-                                                             bool is_dual) {
+gpu::CriticalPointsAsTensors launch_extract_critical_points_metal(torch::Tensor d_paired_with, int H, int W, int Nx) {
   @autoreleasepool {
     int num_cells = 4 * (H + 1) * (W + 1);
 
@@ -299,11 +294,7 @@ CriticalPointsAsTensors launch_extract_critical_points_metal(torch::Tensor d_pai
     torch::Tensor exact_edges = d_edges.slice(0, 0, e_count);
     torch::Tensor exact_faces = d_faces.slice(0, 0, f_count);
 
-    if (is_dual) {
-      return {exact_faces, exact_edges, exact_vertices};
-    } else {
-      return {exact_vertices, exact_edges, exact_faces};
-    }
+    return {exact_faces, exact_edges, exact_vertices};
   }
 }
 

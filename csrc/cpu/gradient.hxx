@@ -193,7 +193,7 @@ void compute_gradient(int total_blocks, int num_blocks_x, int block_size, int H,
 }
 
 template <bool IS_DUAL, typename Workspace, typename scalar_t = float>
-void update_helpers(Workspace& ws, const scalar_t* data) {
+void update_gradient_helpers(Workspace& ws, const scalar_t* data) {
   int H = ws.H;
   int W = ws.W;
   int Nx = ws.Nx;
@@ -206,7 +206,7 @@ void update_helpers(Workspace& ws, const scalar_t* data) {
   fast_crit_map.assign(ws.num_cells, -1);
   crit_min_vals.resize(cp.mins.size());
   crit_max_vals.resize(cp.maxes.size());
-
+  // printf("(IS_DUAL=%d): MAXES: %ld / MINS: %ld\n", (int)IS_DUAL, cp.maxes.size(), cp.mins.size());
   tbb::parallel_invoke(
       [&]() {
         for (size_t i = 0; i < cp.maxes.size(); ++i) {
@@ -235,7 +235,7 @@ void compute_gradient_and_crit_points(Workspace& ws, const torch::Tensor& scalar
 
   compute_gradient<IS_DUAL>(total_blocks, num_blocks_x, block_size, ws.H, ws.W, ws.Nx, data, gd.paired_with);
   extract_critical_points(gd.paired_with, ws.H, ws.W, ws.Nx, gd.cp.mins, gd.cp.saddles, gd.cp.maxes);
-  update_helpers<IS_DUAL>(ws, data);
+  update_gradient_helpers<IS_DUAL>(ws, data);
 }
 
 }  // namespace cpu
