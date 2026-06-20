@@ -16,3 +16,4 @@ trace*.json
 *.gz
 uv.lock
 *.log
+tmp
