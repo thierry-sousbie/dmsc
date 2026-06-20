@@ -1,32 +1,11 @@
-#include <ATen/Parallel.h>
 #include <ATen/record_function.h>
-#include <pybind11/stl.h>  // REQUIRED to return std::vector as a Python List
-#include <tbb/global_control.h>
-#include <tbb/parallel_invoke.h>
-#include <tbb/parallel_sort.h>
-#include <torch/extension.h>
+#include <pybind11/stl.h>
 
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstring>
-#include <limits>
-#include <map>
-#include <set>
-#include <stdexcept>
 #include <vector>
 
-#include "./cpu/arcs_simplification.hxx"
-#include "./cpu/cell_compare.hxx"
-#include "./cpu/persistence.hxx"
+#include "./cpu/dmsc_impl.hxx"
 #include "./dmsc_struct.hxx"
-#include "./gpu/workspace.hxx"
-
-#ifdef __APPLE__
-#include "./gpu/dmsc_mps.hxx"
-#else
-#include "./gpu/dmsc_cuda.hxx"
-#endif
+#include "./gpu/dmsc_impl.hxx"
 
 using namespace gpu;
 

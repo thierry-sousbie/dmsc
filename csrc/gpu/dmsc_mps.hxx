@@ -14,9 +14,8 @@
 #include "../cpu/persistence_struct.hxx"
 #include "./arcs_geometry_struct.hxx"
 #include "./arcs_simplification_struct.hxx"
-
-// #include "./gradient_struct.hxx"
-#include "./trace_saddles_helpers.hxx"
+#include "./arcs_topology_helpers.hxx"
+#include "./gradient_struct.hxx"
 
 namespace gpu {}  // namespace gpu
 
@@ -132,7 +131,7 @@ void compute_cell_groups(Workspace& ws) {
 
   auto dev = ws.d_data.device();
   auto i_opts = torch::TensorOptions().dtype(torch::kInt32).device(dev);
-  auto byte_opts = torch::TensorOptions().dtype(torch::kUInt8).device(dev);
+  // auto byte_opts = torch::TensorOptions().dtype(torch::kUInt8).device(dev);
 
   torch::Tensor d_fast_crit_map =
       torch::from_blob((void*)fast_crit_map.data(), {num_cells}, torch::kInt32).to(dev, /*non_blocking=*/true);

@@ -14,13 +14,11 @@
 #include <stdexcept>
 #include <vector>
 
-// #include "../cpu/arcs_simplification.hxx"
 #include "../cpu/arcs_simplification.hxx"
 #include "../cpu/persistence_struct.hxx"
 #include "./arcs_geometry_struct.hxx"
 #include "./arcs_simplification_struct.hxx"
-// #include "./gradient_struct.hxx"
-#include "./trace_saddles_helpers.hxx"
+#include "./arcs_topology_helpers.hxx"
 
 void launch_gradient_cuda(const float* data, int* paired_with, int H, int W, bool is_dual);
 gpu::CriticalPointsAsTensors launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx);

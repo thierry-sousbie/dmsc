@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "../cell_complex.hxx"
-#include "../cpu/arcs_topology_struct.hxx"
+#include "./arcs_topology_struct.hxx"
 
 namespace gpu {
 // Exactly as defined in metal/metal_backend.mm
@@ -60,8 +60,7 @@ torch::Tensor get_packed_sort_indices(const torch::Tensor& s_vals, const torch::
 template <bool IS_DUAL = false, typename Workspace>
 inline void tensors_to_sad_events(Workspace& ws, const TracedSaddlesTensors& tensors) {
   RECORD_FUNCTION("tensors_to_sad_events", {});
-  int Nx = ws.Nx;
-  ArcsTopology& out = ws.arcs_topology;
+  auto& out = ws.arcs_topology;
   const auto& fast_crit_map = ws.hlp.fast_crit_map;
 
   if (!tensors.saddles.defined() || tensors.saddles.numel() == 0) return;

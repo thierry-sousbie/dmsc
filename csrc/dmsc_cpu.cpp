@@ -1,28 +1,10 @@
-#include <ATen/Parallel.h>
 #include <ATen/record_function.h>
-#include <pybind11/stl.h>  // REQUIRED to return std::vector as a Python List
-#include <tbb/blocked_range.h>
-#include <tbb/enumerable_thread_specific.h>
-#include <tbb/global_control.h>
-#include <tbb/parallel_for.h>
-#include <tbb/parallel_invoke.h>
-#include <tbb/parallel_sort.h>
+#include <pybind11/stl.h>
 #include <torch/extension.h>
 
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstring>
-#include <limits>
 #include <vector>
 
-#include "./cpu/arcs_geometry.hxx"
-#include "./cpu/arcs_simplification.hxx"
-#include "./cpu/arcs_topology.hxx"
-#include "./cpu/cell_groups.hxx"
-#include "./cpu/gradient.hxx"
-#include "./cpu/persistence.hxx"
-#include "./cpu/workspace.hxx"
+#include "./cpu/dmsc_impl.hxx"
 #include "./dmsc_struct.hxx"
 
 using namespace cpu;
@@ -103,8 +85,6 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
     cpu::Workspace ws(H, W);
 
     for (int b = 0; b < B; ++b) {
-      // torch::Tensor img = scalar_field[b];  // Shallow slice wrapper
-
       if (is_dual) {
         results.push_back(extract_single_dmsc_cpu_t<true>(scalar_field[b], persistence_threshold, block_size,
                                                           return_gradient, trace_arcs, trace_manifolds, ws));
