@@ -205,7 +205,7 @@ TracedSaddlesTensors launch_trace_from_saddles_cuda(torch::Tensor& active_field,
   auto int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCUDA);
   auto float_opts = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
 
-  // You can use torch::empty here since the kernel completely overwrites every mapped index
+  // The kernel overwrites everything
   torch::Tensor max_c1 = torch::empty({num_saddles}, int_opts);
   torch::Tensor max_c2 = torch::empty({num_saddles}, int_opts);
   torch::Tensor min_c1 = torch::empty({num_saddles}, int_opts);
@@ -214,7 +214,7 @@ TracedSaddlesTensors launch_trace_from_saddles_cuda(torch::Tensor& active_field,
   torch::Tensor max_len = torch::empty({num_saddles * 2}, int_opts);
   torch::Tensor min_len = torch::empty({num_saddles * 2}, int_opts);
 
-  // The atomic counter must explicitly start at 0
+  // The atomic counter must start at 0
   torch::Tensor global_counter = torch::zeros({1}, int_opts);
 
   int threads = 256;
