@@ -17,13 +17,10 @@
 #include "./arcs_topology_helpers.hxx"
 #include "./gradient_struct.hxx"
 
-namespace gpu {}  // namespace gpu
-
 void launch_gradient_metal(torch::Tensor d_data, torch::Tensor d_paired_with, int H, int W, bool is_dual);
 gpu::CriticalPointsAsTensors launch_extract_critical_points_metal(torch::Tensor d_paired_with, int H, int W, int Nx);
 gpu::TracedSaddlesTensors launch_trace_from_saddles_metal(torch::Tensor d_data, torch::Tensor d_paired_with,
-                                                          torch::Tensor d_saddles, int sad_count, int H, int W, int Nx,
-                                                          bool is_dual);
+                                                          torch::Tensor d_saddles, int H, int W, int Nx, bool is_dual);
 void launch_cell_groups_metal(torch::Tensor d_data, torch::Tensor d_paired_with, torch::Tensor d_fast_crit_map,
                               torch::Tensor d_uf_parent, torch::Tensor d_crits, torch::Tensor d_fast_region_id,
                               torch::Tensor d_out_groups, int H, int W, int Nx, bool is_dual, bool trace_faces);
@@ -182,11 +179,9 @@ void trace_from_saddles(Workspace& ws) {
   int H = ws.H;
   int W = ws.W;
   int Nx = ws.Nx;
-  int saddles_count = ws.gradient_data.cp.saddles.size();
 
-  auto traced_saddles_tensors =
-      launch_trace_from_saddles_metal(ws.d_data, ws.gradient_data.d_paired_with.get(), ws.gradient_data.d_saddles.get(),
-                                      saddles_count, H, W, Nx, IS_DUAL);
+  auto traced_saddles_tensors = launch_trace_from_saddles_metal(ws.d_data, ws.gradient_data.d_paired_with.get(),
+                                                                ws.gradient_data.d_saddles.get(), H, W, Nx, IS_DUAL);
 
   tensors_to_sad_events<IS_DUAL>(ws, traced_saddles_tensors);
 }

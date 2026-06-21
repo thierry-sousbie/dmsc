@@ -302,9 +302,9 @@ gpu::CriticalPointsAsTensors launch_extract_critical_points_metal(torch::Tensor 
 // PHASE 2: Trace Saddles
 // ==========================================
 TracedSaddlesTensors launch_trace_from_saddles_metal(torch::Tensor d_data, torch::Tensor d_paired_with,
-                                                     torch::Tensor d_saddles, int sad_count, int H, int W, int Nx,
-                                                     bool is_dual) {
+                                                     torch::Tensor d_saddles, int H, int W, int Nx, bool is_dual) {
   @autoreleasepool {
+    auto sad_count = d_saddles.numel();
     if (sad_count == 0) return {};
 
     auto int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS);
@@ -366,7 +366,7 @@ TracedSaddlesTensors launch_trace_from_saddles_metal(torch::Tensor d_data, torch
                        offset:out.min_len.storage_offset() * out.min_len.itemsize()
                       atIndex:9];
 
-    Constants params = {H, W, Nx, sad_count};
+    Constants params = {H, W, Nx, static_cast<int>(sad_count)};
     id<MTLBuffer> params_buf = [g_ctx.device newBufferWithBytes:&params
                                                          length:sizeof(Constants)
                                                         options:MTLResourceStorageModeShared];
