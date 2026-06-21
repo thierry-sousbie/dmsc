@@ -76,10 +76,6 @@ void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
     launch_gradient_cuda(ws.d_data.template data_ptr<float>(), d_paired_with.data_ptr<int>(), H, W, IS_DUAL);
   }
 
-  // Copy paired_with back to CPU (Needed for simplification unfortunately)
-  torch::Tensor cpu_paired = d_paired_with.cpu();
-  ws.gradient_data.paired_with.assign(cpu_paired.data_ptr<int>(), cpu_paired.data_ptr<int>() + num_cells);
-
   // Compute crit points on GPU
   auto cpt = launch_extract_critical_points_cuda(d_paired_with.data_ptr<int>(), H, W, Nx);
   ws.gradient_data.cp = tensors_to_critical_points(cpt);
@@ -127,18 +123,23 @@ void compute_cell_groups(Workspace& ws) {
 
   auto dev = ws.d_data.device();
   auto i_opts = torch::TensorOptions().dtype(torch::kInt32).device(dev);
-  auto byte_opts = torch::TensorOptions().dtype(torch::kUInt8).device(dev);
+  
+  torch::Tensor d_crit_maxes = gdata.d_maxes.get();
+  torch::Tensor d_crit_mins = gdata.d_mins.get();
+  torch::Tensor d_crit_saddles = gdata.d_saddles.get();
 
-  torch::Tensor d_fast_crit_map =
-      torch::from_blob((void*)fast_crit_map.data(), {num_cells}, torch::kInt32).to(dev, /*non_blocking=*/true);
+  torch::Tensor d_fast_crit_map = torch::full({num_cells}, -1, i_opts);
+  if (num_crit_maxes > 0) d_fast_crit_map.index_put_({d_crit_maxes}, torch::arange((long)num_crit_maxes, i_opts));
+  if (num_crit_mins > 0) d_fast_crit_map.index_put_({d_crit_mins}, torch::arange((long)num_crit_mins, i_opts));
+  if (d_crit_saddles.numel() > 0) d_fast_crit_map.index_put_({d_crit_saddles}, torch::arange((long)d_crit_saddles.numel(), i_opts));
 
   torch::Tensor d_uf_max_parent = torch::from_blob((void*)uf_max.parent.data(), {(long)num_crit_maxes}, torch::kInt32)
                                       .to(dev, /*non_blocking=*/true);
-  torch::Tensor d_crit_maxes = gdata.d_maxes.get();
 
   torch::Tensor d_uf_min_parent = torch::from_blob((void*)uf_min.parent.data(), {(long)num_crit_mins}, torch::kInt32)
                                       .to(dev, /*non_blocking=*/true);
-  torch::Tensor d_crit_mins = gdata.d_mins.get();
+
+  auto byte_opts = torch::TensorOptions().dtype(torch::kUInt8).device(dev);
 
   torch::Tensor d_max_alive = torch::from_blob((void*)max_alive.data(), {(long)num_crit_maxes}, torch::kUInt8)
                                   .to(dev, /*non_blocking=*/true)

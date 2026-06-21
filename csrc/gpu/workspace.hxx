@@ -308,7 +308,7 @@ struct Workspace {
     auto t_sad = hlp.out_sad_pts.get().slice(0, 0, num_surviving_sads).to(dev).clone();
     
     result.sad_pts = t_sad;
-    result.grad_indices = return_gradient ? hlp.out_grad.copy_from_cpu_ptr(gradient_data.paired_with.data(), {num_cells}, opts_i).to(dev).clone()
+    result.grad_indices = return_gradient ? gradient_data.d_paired_with.get().clone()
                                           : torch::empty({0}, dev_opts_i);
 
     auto t_e_max = hlp.out_e_max.get().slice(0, 0, e_max_count).to(dev).clone();
