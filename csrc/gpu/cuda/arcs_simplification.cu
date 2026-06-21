@@ -37,6 +37,23 @@ __device__ inline GPUPathRef merge_paths_cuda(GPUPathRef p1, GPUPathRef p2, GPUD
   return {new_id, 1};
 }
 
+__device__ inline GPUPathRef read_only_find_with_weight(int i, const int* parent, const GPUPathRef* weights,
+                                                        GPUDAGNode* dag, int* dag_sz, const int* base_lens, int N2,
+                                                        int stop_node) {
+  if (i == -1) return GPUPathRef{-1, 1};
+
+  GPUPathRef acc = weights[i];
+  int curr = parent[i];
+
+  while (curr != -1 && parent[curr] != curr && curr != stop_node) {
+    if (weights[curr].id != -1) {
+      acc = merge_paths_cuda(acc, weights[curr], dag, dag_sz, base_lens, N2);
+    }
+    curr = parent[curr];
+  }
+  return acc;
+}
+
 __global__ void evaluate_cancellations_kernel(const int* cancels, const int* init_t, const int* parent_ptrs,
                                               const uint8_t* alive, const uint8_t* pending, int* ready_count,
                                               int* ready_list, int num_cancels, int num_extrema) {
@@ -77,21 +94,30 @@ __global__ void contract_cancellations_kernel(const int* ready_list, const int* 
     int R0 = read_only_find(T0, parent_ptrs);
     int R1 = read_only_find(T1, parent_ptrs);
 
-    GPUPathRef wT0 = (T0 == -1) ? GPUPathRef{-1, 1} : weights[T0];
-    GPUPathRef wT1 = (T1 == -1) ? GPUPathRef{-1, 1} : weights[T1];
-
     if (R0 == dead && R0 != R1) {
-      parent_ptrs[R0] = R1;
+      GPUPathRef wT0 = read_only_find_with_weight(T0, parent_ptrs, weights, dag, dag_sz, base_lens, N2, R0);
+      GPUPathRef wT1 = read_only_find_with_weight(T1, parent_ptrs, weights, dag, dag_sz, base_lens, N2, R1);
+
       GPUPathRef Full0 = merge_paths_cuda({2 * s, 1}, wT0, dag, dag_sz, base_lens, N2);
       GPUPathRef Full1 = merge_paths_cuda({2 * s + 1, 1}, wT1, dag, dag_sz, base_lens, N2);
       weights[R0] = merge_paths_cuda({Full0.id, Full0.fwd == 0 ? 1 : 0}, Full1, dag, dag_sz, base_lens, N2);
+
+      __threadfence();
+      parent_ptrs[R0] = R1;
+
       alive[s] = 0;
       pending[cancel_idx] = 0;
     } else if (R1 == dead && R0 != R1) {
-      parent_ptrs[R1] = R0;
+      GPUPathRef wT0 = read_only_find_with_weight(T0, parent_ptrs, weights, dag, dag_sz, base_lens, N2, R0);
+      GPUPathRef wT1 = read_only_find_with_weight(T1, parent_ptrs, weights, dag, dag_sz, base_lens, N2, R1);
+
       GPUPathRef Full0 = merge_paths_cuda({2 * s, 1}, wT0, dag, dag_sz, base_lens, N2);
       GPUPathRef Full1 = merge_paths_cuda({2 * s + 1, 1}, wT1, dag, dag_sz, base_lens, N2);
       weights[R1] = merge_paths_cuda({Full1.id, Full1.fwd == 0 ? 1 : 0}, Full0, dag, dag_sz, base_lens, N2);
+
+      __threadfence();
+      parent_ptrs[R1] = R0;
+
       alive[s] = 0;
       pending[cancel_idx] = 0;
     }

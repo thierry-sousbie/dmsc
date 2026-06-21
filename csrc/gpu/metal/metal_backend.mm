@@ -60,6 +60,7 @@ struct MetalContext {
 
   id<MTLComputePipelineState> evaluate_simplification_pipeline;
   id<MTLComputePipelineState> contract_simplification_pipeline;
+  id<MTLComputePipelineState> compress_paths_pipeline;
 
   bool initialized = false;
 };
@@ -166,6 +167,9 @@ inline void init_metal_context_if_needed() {
                                                   error:&error];
   g_ctx.contract_simplification_pipeline =
       [g_ctx.device newComputePipelineStateWithFunction:[simp_lib newFunctionWithName:@"contract_cancellations_metal"]
+                                                  error:&error];
+  g_ctx.compress_paths_pipeline =
+      [g_ctx.device newComputePipelineStateWithFunction:[simp_lib newFunctionWithName:@"compress_paths_step_metal"]
                                                   error:&error];
 
   g_ctx.commandQueue = [g_ctx.device newCommandQueue];
@@ -552,6 +556,11 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
     id<MTLBuffer> d_ready_list = [g_ctx.device newBufferWithLength:(num_cancels * sizeof(int))
                                                            options:MTLResourceStorageModePrivate];
 
+    id<MTLBuffer> d_temp_weights = [g_ctx.device newBufferWithLength:(num_extrema * sizeof(uint64_t))
+                                                             options:MTLResourceStorageModePrivate];
+    id<MTLBuffer> d_temp_parents = [g_ctx.device newBufferWithLength:(num_extrema * sizeof(int))
+                                                             options:MTLResourceStorageModePrivate];
+
     int threads = 256;
     int iteration = 0;
 
@@ -573,7 +582,6 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
       [evalEncoder setBuffer:d_ready_count offset:0 atIndex:5];
       [evalEncoder setBuffer:d_ready_list offset:0 atIndex:6];
 
-      // FIX: Use setBytes for direct primitive injection into the shader
       [evalEncoder setBytes:&num_cancels length:sizeof(int) atIndex:7];
       [evalEncoder setBytes:&num_extrema length:sizeof(int) atIndex:8];
 
@@ -612,7 +620,6 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
       [contractEncoder setBuffer:getMTLBufferStorage(d_alive) offset:0 atIndex:8];
       [contractEncoder setBuffer:getMTLBufferStorage(d_pending) offset:0 atIndex:9];
 
-      // FIX: Bind the remaining primitives matching the Metal signature exactly
       [contractEncoder setBytes:&ready length:sizeof(int) atIndex:10];
       [contractEncoder setBytes:&N2 length:sizeof(int) atIndex:11];
 
@@ -623,6 +630,68 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
 
       [contractBuffer commit];
       [contractBuffer waitUntilCompleted];
+
+      // ---------------------------------------------------------
+      // KERNEL 3: COMPRESS PATHS
+      // ---------------------------------------------------------
+      bool use_alt = false;
+      int pass = 0;
+      MTLSize tpg_comp = MTLSizeMake((num_extrema + threads - 1) / threads, 1, 1);
+
+      while (pass < 32) {
+        ((int*)d_ready_count.contents)[0] = 0;  // Use ready_count as 'changed' flag
+
+        id<MTLCommandBuffer> compBuffer = [g_ctx.commandQueue commandBuffer];
+        id<MTLComputeCommandEncoder> compEncoder = [compBuffer computeCommandEncoder];
+        [compEncoder setComputePipelineState:g_ctx.compress_paths_pipeline];
+
+        id<MTLBuffer> p_in = use_alt ? d_temp_parents : getMTLBufferStorage(d_parent_ptrs);
+        id<MTLBuffer> w_in = use_alt ? d_temp_weights : getMTLBufferStorage(d_weights);
+        id<MTLBuffer> p_out = use_alt ? getMTLBufferStorage(d_parent_ptrs) : d_temp_parents;
+        id<MTLBuffer> w_out = use_alt ? getMTLBufferStorage(d_weights) : d_temp_weights;
+
+        [compEncoder setBuffer:p_in offset:0 atIndex:0];
+        [compEncoder setBuffer:w_in offset:0 atIndex:1];
+        [compEncoder setBuffer:p_out offset:0 atIndex:2];
+        [compEncoder setBuffer:w_out offset:0 atIndex:3];
+        [compEncoder setBuffer:getMTLBufferStorage(d_dag) offset:0 atIndex:4];
+        [compEncoder setBuffer:mtl_dag_sz offset:0 atIndex:5];
+        [compEncoder setBuffer:getMTLBufferStorage(d_base_lens) offset:0 atIndex:6];
+        [compEncoder setBuffer:d_ready_count offset:0 atIndex:7];
+        [compEncoder setBytes:&num_extrema length:sizeof(int) atIndex:8];
+        [compEncoder setBytes:&N2 length:sizeof(int) atIndex:9];
+
+        [compEncoder dispatchThreadgroups:tpg_comp threadsPerThreadgroup:tpt];
+        [compEncoder endEncoding];
+
+        [compBuffer commit];
+        [compBuffer waitUntilCompleted];
+
+        use_alt = !use_alt;
+        pass++;
+
+        int changed = ((int*)d_ready_count.contents)[0];
+        if (changed == 0) break;
+      }
+
+      // If final data is in alt buffers, copy back to primary PyTorch tensors
+      if (use_alt) {
+        id<MTLCommandBuffer> copyBuffer = [g_ctx.commandQueue commandBuffer];
+        id<MTLBlitCommandEncoder> blitEncoder = [copyBuffer blitCommandEncoder];
+        [blitEncoder copyFromBuffer:d_temp_parents
+                       sourceOffset:0
+                           toBuffer:getMTLBufferStorage(d_parent_ptrs)
+                  destinationOffset:d_parent_ptrs.storage_offset() * d_parent_ptrs.itemsize()
+                               size:num_extrema * sizeof(int)];
+        [blitEncoder copyFromBuffer:d_temp_weights
+                       sourceOffset:0
+                           toBuffer:getMTLBufferStorage(d_weights)
+                  destinationOffset:d_weights.storage_offset() * d_weights.itemsize()
+                               size:num_extrema * sizeof(uint64_t)];
+        [blitEncoder endEncoding];
+        [copyBuffer commit];
+        [copyBuffer waitUntilCompleted];
+      }
 
       iteration++;
     }

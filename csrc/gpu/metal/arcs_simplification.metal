@@ -50,9 +50,24 @@ inline PathRef merge_paths(PathRef p1, PathRef p2, device DAGNode* dag, device a
   return out;
 }
 
-// ==========================================
-// 3. KERNEL 1: Evaluate (Read-Only)
-// ==========================================
+inline PathRef read_only_find_with_weight(int i, const device int* parent, const device PathRef* weights,
+                                          device DAGNode* dag, device atomic_int* dag_sz, const device int* base_lens,
+                                          int N2, int stop_node) {
+  if (i == -1) return PathRef{-1, 1};
+
+  PathRef acc = weights[i];
+  int curr = parent[i];
+
+  while (curr != -1 && parent[curr] != curr && curr != stop_node) {
+    if (weights[curr].id != -1) {
+      acc = merge_paths(acc, weights[curr], dag, dag_sz, base_lens, N2);
+    }
+    curr = parent[curr];
+  }
+  return acc;
+}
+
+// Evaluate (Read-Only)
 kernel void evaluate_cancellations_metal(const device int* cancels [[buffer(0)]],  // Flattened [N, 2]
                                          const device int* init_t [[buffer(1)]],
                                          const device int* parent_ptrs [[buffer(2)]],
@@ -84,9 +99,7 @@ kernel void evaluate_cancellations_metal(const device int* cancels [[buffer(0)]]
   }
 }
 
-// ==========================================
-// 4. KERNEL 2: Contract (Write-Only)
-// ==========================================
+// Contract (Write-Only)
 kernel void contract_cancellations_metal(
     const device int* ready_list [[buffer(0)]], const device int* cancels [[buffer(1)]],
     const device int* init_t [[buffer(2)]], const device int* base_lens [[buffer(3)]],
@@ -102,32 +115,64 @@ kernel void contract_cancellations_metal(
   int T0 = init_t[2 * s];
   int T1 = init_t[2 * s + 1];
 
-  // We do NOT use path compression here to avoid memory races.
-  // We already proved they are 1 hop away in Kernel 1.
   int R0 = read_only_find(T0, parent_ptrs);
   int R1 = read_only_find(T1, parent_ptrs);
 
-  PathRef wT0 = (T0 == -1) ? PathRef{-1, 1} : weights[T0];
-  PathRef wT1 = (T1 == -1) ? PathRef{-1, 1} : weights[T1];
-
   if (R0 == dead && R0 != R1) {
-    parent_ptrs[R0] = R1;
+    PathRef wT0 = (T0 == -1 || T0 == R0) ? PathRef{-1, 1} : weights[T0];
+    PathRef wT1 = (T1 == -1 || T1 == R1) ? PathRef{-1, 1} : weights[T1];
 
     PathRef Full0 = merge_paths({2 * s, 1}, wT0, dag, dag_sz, base_lens, N2);
     PathRef Full1 = merge_paths({2 * s + 1, 1}, wT1, dag, dag_sz, base_lens, N2);
     weights[R0] = merge_paths({Full0.id, Full0.fwd == 0 ? 1 : 0}, Full1, dag, dag_sz, base_lens, N2);
 
+    threadgroup_barrier(mem_flags::mem_device);
+    parent_ptrs[R0] = R1;
+
     alive[s] = 0;
     pending[cancel_idx] = 0;
 
   } else if (R1 == dead && R0 != R1) {
-    parent_ptrs[R1] = R0;
+    PathRef wT0 = (T0 == -1 || T0 == R0) ? PathRef{-1, 1} : weights[T0];
+    PathRef wT1 = (T1 == -1 || T1 == R1) ? PathRef{-1, 1} : weights[T1];
 
     PathRef Full0 = merge_paths({2 * s, 1}, wT0, dag, dag_sz, base_lens, N2);
     PathRef Full1 = merge_paths({2 * s + 1, 1}, wT1, dag, dag_sz, base_lens, N2);
     weights[R1] = merge_paths({Full1.id, Full1.fwd == 0 ? 1 : 0}, Full0, dag, dag_sz, base_lens, N2);
 
+    threadgroup_barrier(mem_flags::mem_device);
+    parent_ptrs[R1] = R0;
+
     alive[s] = 0;
     pending[cancel_idx] = 0;
   }
+}
+
+// Compress Paths Step
+kernel void compress_paths_step_metal(const device int* parent_in [[buffer(0)]],
+                                      const device PathRef* weights_in [[buffer(1)]],
+                                      device int* parent_out [[buffer(2)]], device PathRef* weights_out [[buffer(3)]],
+                                      device DAGNode* dag [[buffer(4)]], device atomic_int* dag_sz [[buffer(5)]],
+                                      const device int* base_lens [[buffer(6)]],
+                                      device atomic_int* changed [[buffer(7)]], constant int& num_extrema [[buffer(8)]],
+                                      constant int& N2 [[buffer(9)]], uint id [[thread_position_in_grid]]) {
+  if (id >= (uint)num_extrema) return;
+
+  int p = parent_in[id];
+
+  if (p != id && p != -1) {
+    int pp = parent_in[p];
+    if (pp != p && pp != -1) {
+      PathRef wp = weights_in[p];
+      PathRef w_new = merge_paths(weights_in[id], wp, dag, dag_sz, base_lens, N2);
+
+      parent_out[id] = pp;
+      weights_out[id] = w_new;
+      atomic_store_explicit(changed, 1, memory_order_relaxed);
+      return;
+    }
+  }
+
+  parent_out[id] = p;
+  weights_out[id] = weights_in[id];
 }

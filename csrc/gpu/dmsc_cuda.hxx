@@ -22,6 +22,8 @@
 #include "./arcs_topology_helpers.hxx"
 #include "./gradient_struct.hxx"
 
+#define MAX_DAG_ALLOC_PER_PAIR_GPU 15
+
 void launch_gradient_cuda(const float* data, int* paired_with, int H, int W, bool is_dual);
 gpu::CriticalPointsAsTensors launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx);
 void launch_cell_groups_cuda(const float* data, const int* paired_with, const int* fast_crit_map, const int* uf_parent,
@@ -252,11 +254,17 @@ void trace_raw_arcs_geometry(Workspace& ws) {
 }
 
 template <typename Workspace>
-void simplify_arcs_geometry(Workspace& ws, SaddleNodes& sn, int num_crit_maxes, int num_crit_mins,
-                            std::vector<cpu::CancelEvent>& min_cancellations,
-                            std::vector<cpu::CancelEvent>& max_cancellations) {
-  RECORD_FUNCTION("simplify_arcs_geometry_cuda_dispatch", {});
+void simplify_arcs_geometry(Workspace& ws) {
+  RECORD_FUNCTION("simplify_arcs_geometry_cuda", {});
+  auto& min_cancellations = ws.p_data.min_cancellations;
+  auto& max_cancellations = ws.p_data.max_cancellations;
 
+  tbb::parallel_sort(max_cancellations.begin(), max_cancellations.end());
+  tbb::parallel_sort(min_cancellations.begin(), min_cancellations.end());
+
+  auto& sn = ws.saddle_nodes;
+  int num_crit_maxes = ws.gradient_data.cp.maxes.size();
+  int num_crit_mins = ws.gradient_data.cp.mins.size();
   int num_saddles = sn.nodes.size();
   int N2 = num_saddles * 2;
 
@@ -298,7 +306,7 @@ void simplify_arcs_geometry(Workspace& ws, SaddleNodes& sn, int num_crit_maxes, 
 
   // MAXIMA PREP
   int num_max_cancels = max_cancellations.size();
-  size_t safe_max_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, max_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR);
+  size_t safe_max_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, max_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR_GPU);
 
   torch::Tensor d_max_init_t = torch::from_blob(init_t_max.data(), {N2}, torch::kInt32).to(dev, true);
   torch::Tensor d_max_base_lens = torch::from_blob(base_max_len.data(), {N2}, torch::kInt32).to(dev, true);
@@ -320,7 +328,7 @@ void simplify_arcs_geometry(Workspace& ws, SaddleNodes& sn, int num_crit_maxes, 
 
   // MINIMA PREP
   int num_min_cancels = min_cancellations.size();
-  size_t safe_min_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, min_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR);
+  size_t safe_min_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, min_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR_GPU);
 
   torch::Tensor d_min_init_t = torch::from_blob(init_t_min.data(), {N2}, torch::kInt32).to(dev, true);
   torch::Tensor d_min_base_lens = torch::from_blob(base_min_len.data(), {N2}, torch::kInt32).to(dev, true);
