@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "../cell_complex.hxx"
+#include "./arcs_topology_struct.hxx"
 
 namespace gpu {
 // Exactly as defined in metal/metal_backend.mm
@@ -24,12 +25,12 @@ struct TracedSaddlesTensors {
   torch::Tensor min_len;
 };
 
-struct TracedSaddlesVectors {
-  std::vector<SadEvent> sorted_max_saddles;
-  std::vector<SadEvent> sorted_min_saddles;
-  std::vector<int> max_arcs_len;
-  std::vector<int> min_arcs_len;
-};
+// struct TracedSaddlesVectors {
+//   std::vector<SadEvent> sorted_max_saddles;
+//   std::vector<SadEvent> sorted_min_saddles;
+//   std::vector<int> max_arcs_len;
+//   std::vector<int> min_arcs_len;
+// };
 
 // IMPORTANT: The simulation of simplicity convention here is exactly the same as the one defined in
 // SadEventLess{} / SadEventGreater{} when descending is True / False.
@@ -56,13 +57,13 @@ torch::Tensor get_packed_sort_indices(const torch::Tensor& s_vals, const torch::
   return std::get<1>(torch::sort(packed_keys, -1, /*descending=*/descending)).cpu().contiguous();
 }
 
-template <bool IS_DUAL = false>
-inline TracedSaddlesVectors tensors_to_sad_events(const TracedSaddlesTensors& tensors, int Nx) {
-  TracedSaddlesVectors out;
+template <bool IS_DUAL = false, typename Workspace>
+inline void tensors_to_sad_events(Workspace& ws, const TracedSaddlesTensors& tensors) {
   RECORD_FUNCTION("tensors_to_sad_events", {});
-  if (!tensors.saddles.defined() || tensors.saddles.numel() == 0) {
-    return out;
-  }
+  auto& out = ws.arcs_topology;
+  const auto& fast_crit_map = ws.hlp.fast_crit_map;
+
+  if (!tensors.saddles.defined() || tensors.saddles.numel() == 0) return;
 
   torch::Tensor indices;
   {
@@ -108,17 +109,20 @@ inline TracedSaddlesVectors tensors_to_sad_events(const TracedSaddlesTensors& te
         float s_val_max = p_s_vals[max_idx];
         int max1 = p_max_c1[max_idx];
         int max2 = p_max_c2[max_idx];
+        int max1_mid = (max1 != -1) ? fast_crit_map[max1] : -1;
+        int max2_mid = (max2 != -1) ? fast_crit_map[max2] : -1;
         int len1 = p_max_len[2 * max_idx];
         int len2 = p_max_len[2 * max_idx + 1];
 
         out.sorted_max_saddles[i] = {-999, -1, -1, -1, -1, 0.0f};
         if (max1 != -1 && max2 != -1) {
-          out.sorted_max_saddles[i] = {s_id_max, max1, max2, -1, -1, s_val_max};
+          out.sorted_max_saddles[i] = {s_id_max, max1, max2, max1_mid, max2_mid, s_val_max};
           out.max_arcs_len[2 * max_idx] = len1;
           out.max_arcs_len[2 * max_idx + 1] = len2;
         } else if ((max1 != -1 && max2 == -1) || (max1 == -1 && max2 != -1)) {
-          int m_real = (max1 != -1) ? max1 : max2;
-          out.sorted_max_saddles[i] = {s_id_max, m_real, -1, -1, -1, s_val_max};
+          int max_real = (max1 != -1) ? max1 : max2;
+          int max_mid_real = (max1 != -1) ? max1_mid : max2_mid;
+          out.sorted_max_saddles[i] = {s_id_max, max_real, -1, max_mid_real, -1, s_val_max};
           out.max_arcs_len[2 * max_idx] = (max1 != -1) ? len1 : len2;
         }
       }
@@ -132,23 +136,24 @@ inline TracedSaddlesVectors tensors_to_sad_events(const TracedSaddlesTensors& te
         float s_val_min = p_s_vals[min_idx];
         int min1 = p_min_c1[min_idx];
         int min2 = p_min_c2[min_idx];
+        int min1_mid = (min1 != -1) ? fast_crit_map[min1] : -1;
+        int min2_mid = (min2 != -1) ? fast_crit_map[min2] : -1;
         int len1 = p_min_len[2 * min_idx];
         int len2 = p_min_len[2 * min_idx + 1];
 
         out.sorted_min_saddles[i] = {-999, -1, -1, -1, -1, 0.0f};
         if (min1 != -1 && min2 != -1) {
-          out.sorted_min_saddles[i] = {s_id_min, min1, min2, -1, -1, s_val_min};
+          out.sorted_min_saddles[i] = {s_id_min, min1, min2, min1_mid, min2_mid, s_val_min};
           out.min_arcs_len[2 * min_idx] = len1;
           out.min_arcs_len[2 * min_idx + 1] = len2;
         } else if ((min1 != -1 && min2 == -1) || (min1 == -1 && min2 != -1)) {
           int min_real = (min1 != -1) ? min1 : min2;
-          out.sorted_min_saddles[i] = {s_id_min, min_real, -1, -1, -1, s_val_min};
+          int min_mid_real = (min1 != -1) ? min1_mid : min2_mid;
+          out.sorted_min_saddles[i] = {s_id_min, min_real, -1, min_mid_real, -1, s_val_min};
           out.min_arcs_len[2 * min_idx] = (min1 != -1) ? len1 : len2;
         }
       }
     });
   }
-
-  return out;
 }
 }  // namespace gpu

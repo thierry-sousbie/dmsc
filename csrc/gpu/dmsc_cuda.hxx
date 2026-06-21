@@ -15,12 +15,15 @@
 #include <vector>
 
 #include "../cpu/arcs_simplification.hxx"
+#include "../cpu/gradient.hxx"
+#include "../cpu/persistence_struct.hxx"
+#include "./arcs_geometry_struct.hxx"
 #include "./arcs_simplification_struct.hxx"
-#include "./trace_saddles_helpers.hxx"
+#include "./arcs_topology_helpers.hxx"
+#include "./gradient_struct.hxx"
 
 void launch_gradient_cuda(const float* data, int* paired_with, int H, int W, bool is_dual);
-void launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx, std::vector<int>& crit_mins,
-                                         std::vector<int>& crit_saddles, std::vector<int>& crit_maxes, bool is_dual);
+gpu::CriticalPointsAsTensors launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx);
 void launch_cell_groups_cuda(const float* data, const int* paired_with, const int* fast_crit_map, const int* uf_parent,
                              const int* crits, const int* fast_region_id, int* out_groups, int H, int W, int Nx,
                              bool is_dual, bool trace_faces);
@@ -39,160 +42,170 @@ void launch_simplify_arcs_cuda(torch::Tensor d_cancels, torch::Tensor d_init_t, 
                                int* host_dag_sz, cudaStream_t stream);
 
 namespace gpu {
-struct CriticalPoints {
-  std::vector<int> maxes;
-  std::vector<int> saddles;
-  std::vector<int> mins;
-};
 
-struct GradientData {
-  CriticalPoints cp;
-  std::vector<int> paired_with;
-
-  // Handles for GPU memory. keep data between calls so we don t need to reallocate
-  torch::Tensor d_data;
-  torch::Tensor d_paired_with;
-  torch::Tensor d_saddles;
-};
-
-template <bool IS_DUAL = false>
-GradientData compute_gradient(torch::Tensor& active_field) {
-  RECORD_FUNCTION("compute_gradient_and_crit_points_gpu", {});
-  auto t0 = std::chrono::high_resolution_clock::now();
-
-  int H = active_field.size(0);
-  int W = active_field.size(1);
-  int Nx = W + 1;
-  int num_cells = 4 * (H + 1) * (W + 1);
-
-  std::vector<int> paired_with(num_cells, -1);
+CriticalPoints tensors_to_critical_points(const gpu::CriticalPointsAsTensors& cpt) {
   CriticalPoints cp;
 
-  active_field = active_field.contiguous();
-  torch::Tensor d_data = active_field;  // Keep a handle to the data on GPU
-  auto opts = torch::TensorOptions().dtype(torch::kInt32).device(active_field.device());
-  torch::Tensor d_paired_with = torch::full({num_cells}, -1, opts);
+  torch::Tensor cpu_mins = cpt.mins.cpu().contiguous();
+  torch::Tensor cpu_saddles = cpt.saddles.cpu().contiguous();
+  torch::Tensor cpu_maxes = cpt.maxes.cpu().contiguous();
 
-  auto t1 = std::chrono::high_resolution_clock::now();
+  cp.mins.assign(cpu_mins.data_ptr<int>(), cpu_mins.data_ptr<int>() + cpu_mins.numel());
+  cp.saddles.assign(cpu_saddles.data_ptr<int>(), cpu_saddles.data_ptr<int>() + cpu_saddles.numel());
+  cp.maxes.assign(cpu_maxes.data_ptr<int>(), cpu_maxes.data_ptr<int>() + cpu_maxes.numel());
 
-  launch_gradient_cuda(active_field.data_ptr<float>(), d_paired_with.data_ptr<int>(), H, W, IS_DUAL);
-
-  auto t2 = std::chrono::high_resolution_clock::now();
-  // is_dual is false because we computed minus the discrete gradient over the dual cells
-  launch_extract_critical_points_cuda(d_paired_with.data_ptr<int>(), H, W, Nx, cp.mins, cp.saddles, cp.maxes, false);
-
-  auto t3 = std::chrono::high_resolution_clock::now();
-
-  // The CUDA extraction populated cp.saddles on the CPU. We push it back to the GPU as a Tensor
-  // so it's ready immediately for Phase 2 trace_from_saddles.
-  torch::Tensor d_saddles =
-      torch::from_blob((void*)cp.saddles.data(), {(long)cp.saddles.size()}, opts.device(torch::kCPU))
-          .to(active_field.device());
-
-  torch::Tensor cpu_paired = d_paired_with.cpu();
-  std::memcpy(paired_with.data(), cpu_paired.data_ptr<int>(), num_cells * sizeof(int));
-
-  auto t4 = std::chrono::high_resolution_clock::now();
-
-  // printf("  [CUDA] Alloc Time: %f ms\n", std::chrono::duration<double, std::milli>(t1 - t0).count());
-  // printf("  [CUDA] Gradient Kernel: %f ms\n", std::chrono::duration<double, std::milli>(t2 - t1).count());
-  // printf("  [CUDA] Thrust Extraction: %f ms\n", std::chrono::duration<double, std::milli>(t3 - t2).count());
-  // printf("  [CUDA] CPU Memcpy: %f ms\n", std::chrono::duration<double, std::milli>(t4 - t3).count());
-
-  return {std::move(cp), std::move(paired_with), d_data, d_paired_with, d_saddles};
+  return cp;
 }
 
-template <bool IS_DUAL = false>
-void compute_cell_groups(const GradientData& gdata, const int* fast_crit_map, const int* uf_max_parent,
-                         const int* crit_maxes, const int* uf_min_parent, const int* crit_mins,
-                         const int* fast_region_id, int* out_face_groups, int* out_vertex_groups, size_t num_crit_maxes,
-                         size_t num_crit_mins) {
-  RECORD_FUNCTION("cell_groups_gpu", {});
-  int H = gdata.d_data.size(0);
-  int W = gdata.d_data.size(1);
+template <bool IS_DUAL = false, typename Workspace>
+void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
+  RECORD_FUNCTION("compute_gradient_and_crit_points_gpu", {});
+  int H = ws.H;
+  int W = ws.W;
   int Nx = W + 1;
-  int num_cells = 4 * (H + 1) * (W + 1);
-  int num_faces = (H + 1) * (W + 1);
-  int num_vertices = (H) * (W);
+  int num_cells = ws.num_cells;
 
-  auto dev = gdata.d_data.device();
-  auto i_opts = torch::TensorOptions().dtype(torch::kInt32).device(dev);
-
-  torch::Tensor d_fast_crit_map = torch::from_blob((void*)fast_crit_map, {num_cells}, torch::kInt32).to(dev);
-
-  torch::Tensor d_uf_max_parent = torch::from_blob((void*)uf_max_parent, {(long)num_crit_maxes}, torch::kInt32).to(dev);
-  torch::Tensor d_crit_maxes = torch::from_blob((void*)crit_maxes, {(long)num_crit_maxes}, torch::kInt32).to(dev);
-
-  torch::Tensor d_uf_min_parent = torch::from_blob((void*)uf_min_parent, {(long)num_crit_mins}, torch::kInt32).to(dev);
-  torch::Tensor d_crit_mins = torch::from_blob((void*)crit_mins, {(long)num_crit_mins}, torch::kInt32).to(dev);
-
-  torch::Tensor d_fast_region = torch::from_blob((void*)fast_region_id, {num_cells}, torch::kInt32).to(dev);
-
-  // Pre-allocate output on CUDA, -2 means unknonw
-  torch::Tensor d_out_face_groups = torch::full({num_faces}, -2, i_opts);
-  torch::Tensor d_out_vertex_groups = torch::full({num_vertices}, -2, i_opts);
+  ws.d_data = scalar_field.contiguous();
+  auto opts = torch::TensorOptions().dtype(torch::kInt32).device(scalar_field.device());
+  torch::Tensor d_paired_with = ws.gradient_data.d_paired_with.request_full({num_cells}, opts, -1);
 
   {
+    RECORD_FUNCTION("KERNEL_GRADIENT", {});
+    launch_gradient_cuda(ws.d_data.template data_ptr<float>(), d_paired_with.data_ptr<int>(), H, W, IS_DUAL);
+  }
+
+  // Copy paired_with back to CPU (Needed for simplification unfortunately)
+  torch::Tensor cpu_paired = d_paired_with.cpu();
+  ws.gradient_data.paired_with.assign(cpu_paired.data_ptr<int>(), cpu_paired.data_ptr<int>() + num_cells);
+
+  // Compute crit points on GPU
+  auto cpt = launch_extract_critical_points_cuda(d_paired_with.data_ptr<int>(), H, W, Nx);
+  ws.gradient_data.cp = tensors_to_critical_points(cpt);
+
+  // Push critical points to GPU natively
+  ws.gradient_data.d_maxes.copy_from_tensor(cpt.maxes, opts);
+  ws.gradient_data.d_mins.copy_from_tensor(cpt.mins, opts);
+  ws.gradient_data.d_saddles.copy_from_tensor(cpt.saddles, opts);
+
+  // update fast_crit_map and other helpers (CPU)
+  torch::Tensor scalar_field_cpu = ws.d_data.cpu();
+  cpu::update_gradient_helpers<IS_DUAL>(ws, scalar_field_cpu.data_ptr<float>());
+}
+
+template <bool IS_DUAL = false, typename Workspace>
+void compute_cell_groups(Workspace& ws) {
+  RECORD_FUNCTION("cell_groups_gpu", {});
+  const auto& gdata = ws.gradient_data;
+  int H = ws.H;
+  int W = ws.W;
+  int Nx = ws.Nx;
+  int num_cells = 4 * (H + 1) * (W + 1);
+
+  auto& uf_max = ws.p_data.uf_max;
+  auto& uf_min = ws.p_data.uf_min;
+  const auto& max_alive = ws.p_data.max_alive;
+  const auto& min_alive = ws.p_data.min_alive;
+  const auto& crit_maxes = ws.gradient_data.cp.maxes;
+  const auto& crit_mins = ws.gradient_data.cp.mins;
+  const auto& fast_crit_map = ws.hlp.fast_crit_map;
+  size_t num_crit_maxes = crit_maxes.size();
+  size_t num_crit_mins = crit_mins.size();
+
+  {
+    RECORD_FUNCTION("cell_groups_preproc_cpu", {});
+    // flatten union_find structures
+    tbb::parallel_invoke(
+        [&]() {
+          for (size_t i = 0; i < uf_max.parent.size(); ++i) uf_max.find(i);
+        },
+        [&]() {
+          for (size_t i = 0; i < uf_min.parent.size(); ++i) uf_min.find(i);
+        });
+  }
+
+  auto dev = ws.d_data.device();
+  auto i_opts = torch::TensorOptions().dtype(torch::kInt32).device(dev);
+  auto byte_opts = torch::TensorOptions().dtype(torch::kUInt8).device(dev);
+
+  torch::Tensor d_fast_crit_map =
+      torch::from_blob((void*)fast_crit_map.data(), {num_cells}, torch::kInt32).to(dev, /*non_blocking=*/true);
+
+  torch::Tensor d_uf_max_parent = torch::from_blob((void*)uf_max.parent.data(), {(long)num_crit_maxes}, torch::kInt32)
+                                      .to(dev, /*non_blocking=*/true);
+  torch::Tensor d_crit_maxes = gdata.d_maxes.get();
+
+  torch::Tensor d_uf_min_parent = torch::from_blob((void*)uf_min.parent.data(), {(long)num_crit_mins}, torch::kInt32)
+                                      .to(dev, /*non_blocking=*/true);
+  torch::Tensor d_crit_mins = gdata.d_mins.get();
+
+  torch::Tensor d_max_alive = torch::from_blob((void*)max_alive.data(), {(long)num_crit_maxes}, torch::kUInt8)
+                                  .to(dev, /*non_blocking=*/true)
+                                  .to(torch::kBool);
+  torch::Tensor d_min_alive = torch::from_blob((void*)min_alive.data(), {(long)num_crit_mins}, torch::kUInt8)
+                                  .to(dev, /*non_blocking=*/true)
+                                  .to(torch::kBool);
+
+  torch::Tensor d_fast_region = ws.hlp.fast_region_id.request_full({num_cells}, i_opts, -1);
+
+  // Compute region prefix sums natively on device
+  torch::Tensor region_ids_max = d_max_alive.to(torch::kInt32).cumsum(0, torch::kInt32) - 1;
+  d_fast_region.index_put_({d_crit_maxes.masked_select(d_max_alive)}, region_ids_max.masked_select(d_max_alive));
+
+  torch::Tensor region_ids_min = d_min_alive.to(torch::kInt32).cumsum(0, torch::kInt32) - 1;
+  d_fast_region.index_put_({d_crit_mins.masked_select(d_min_alive)}, region_ids_min.masked_select(d_min_alive));
+
+  // Pre-allocate output on CUDA, -2 means unknown
+  torch::Tensor d_out_face_groups = ws.cell_groups.face_groups.request_full({H + 1, W + 1}, i_opts, -2);
+  torch::Tensor d_out_vertex_groups = ws.cell_groups.vertex_groups.request_full({H, W}, i_opts, -2);
+  torch::Tensor d_paired_with = gdata.d_paired_with.get();
+  {
     RECORD_FUNCTION("trace_faces", {});
-    launch_cell_groups_cuda(gdata.d_data.data_ptr<float>(), gdata.d_paired_with.data_ptr<int>(),
+    launch_cell_groups_cuda(ws.d_data.template data_ptr<float>(), d_paired_with.data_ptr<int>(),
                             d_fast_crit_map.data_ptr<int>(), d_uf_max_parent.data_ptr<int>(),
                             d_crit_maxes.data_ptr<int>(), d_fast_region.data_ptr<int>(),
-                            d_out_face_groups.data_ptr<int>(), H, W, Nx, IS_DUAL,
-                            /*trace_faces=*/true);
+                            d_out_face_groups.data_ptr<int>(), H, W, Nx, IS_DUAL, /*trace_faces=*/true);
   }
   {
     RECORD_FUNCTION("trace_vertices", {});
-    launch_cell_groups_cuda(gdata.d_data.data_ptr<float>(), gdata.d_paired_with.data_ptr<int>(),
+    launch_cell_groups_cuda(ws.d_data.template data_ptr<float>(), d_paired_with.data_ptr<int>(),
                             d_fast_crit_map.data_ptr<int>(), d_uf_min_parent.data_ptr<int>(),
                             d_crit_mins.data_ptr<int>(), d_fast_region.data_ptr<int>(),
-                            d_out_vertex_groups.data_ptr<int>(), H, W, Nx, IS_DUAL,
-                            /*trace_faces=*/false);
-  }
-
-  // Bring the result back to CPU memory synchronously
-  {
-    RECORD_FUNCTION("Memcpy_Device_To_Host", {});
-    // Wrap your existing raw pointers
-    auto cpu_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
-    torch::Tensor cpu_face_wrapper = torch::from_blob(out_face_groups, {num_faces}, cpu_opts);
-    torch::Tensor cpu_vert_wrapper = torch::from_blob(out_vertex_groups, {num_vertices}, cpu_opts);
-
-    // 2. Direct copy (GPU -> Pre-existing CPU RAM)
-    cpu_face_wrapper.copy_(d_out_face_groups, /*non_blocking=*/false);
-    cpu_vert_wrapper.copy_(d_out_vertex_groups, /*non_blocking=*/false);
+                            d_out_vertex_groups.data_ptr<int>(), H, W, Nx, IS_DUAL, /*trace_faces=*/false);
   }
 }
 
-template <bool IS_DUAL = false>
-TracedSaddlesVectors trace_from_saddles(const GradientData& gdata, int saddles_count, int H, int W, int Nx,
-                                        bool gpu_sort = true) {
+template <bool IS_DUAL = false, typename Workspace>
+void trace_from_saddles(Workspace& ws) {
   RECORD_FUNCTION("trace_from_saddles", {});
-  torch::Tensor d_data = gdata.d_data;
-  torch::Tensor d_paired_with = gdata.d_paired_with;
-  torch::Tensor d_saddles = gdata.d_saddles;
+  int H = ws.H;
+  int W = ws.W;
+  int Nx = ws.Nx;
 
-  auto traced_saddles_tensors = launch_trace_from_saddles_cuda(d_data, d_paired_with, d_saddles, H, W, Nx, IS_DUAL);
+  torch::Tensor d_paired_with = ws.gradient_data.d_paired_with.get();
+  torch::Tensor d_saddles = ws.gradient_data.d_saddles.get();
+  auto traced_saddles_tensors = launch_trace_from_saddles_cuda(ws.d_data, d_paired_with, d_saddles, H, W, Nx, IS_DUAL);
 
-  TracedSaddlesVectors traced_saddles_vectors = tensors_to_sad_events<IS_DUAL>(traced_saddles_tensors, Nx);
-
-  return traced_saddles_vectors;
+  tensors_to_sad_events<IS_DUAL>(ws, traced_saddles_tensors);
 }
 
-SaddleNodes trace_raw_arcs_geometry(const GradientData& gdata, const int* fast_crit_map,
-                                    const std::vector<int>& max_arcs_len, const std::vector<int>& min_arcs_len) {
-  int H = gdata.d_data.size(0);
-  int W = gdata.d_data.size(1);
-  int Nx = W + 1;
-  int num_cells = 4 * (H + 1) * (W + 1);
+template <typename Workspace>
+void trace_raw_arcs_geometry(Workspace& ws) {
   RECORD_FUNCTION("trace_raw_arcs_geometry_gpu", {});
-  auto dev = gdata.d_data.device();
+  int H = ws.H;
+  int W = ws.W;
+  int Nx = ws.Nx;
+  int num_cells = ws.num_cells;
+  const auto& gdata = ws.gradient_data;
+  const auto& max_arcs_len = ws.arcs_topology.max_arcs_len;
+  const auto& min_arcs_len = ws.arcs_topology.min_arcs_len;
 
+  auto dev = ws.d_data.device();
   torch::Tensor d_fast_crit_map =
-      torch::from_blob((void*)fast_crit_map, {num_cells}, torch::kInt32).to(dev, /*non_blocking=*/true);
+      torch::from_blob((void*)ws.hlp.fast_crit_map.data(), {num_cells}, torch::kInt32).to(dev, /*non_blocking=*/true);
 
-  SaddleNodes out;
+  auto& out = ws.saddle_nodes;
   int num_saddles = max_arcs_len.size() / 2;
-  if (num_saddles == 0) return out;
+  if (num_saddles == 0) return;
 
   std::vector<int> max_offsets(num_saddles * 2 + 1, 0);
   std::vector<int> min_offsets(num_saddles * 2 + 1, 0);
@@ -203,7 +216,7 @@ SaddleNodes trace_raw_arcs_geometry(const GradientData& gdata, const int* fast_c
       max_offsets[i + 1] = max_offsets[i] + max_arcs_len[i] + 1;
       min_offsets[i + 1] = min_offsets[i] + min_arcs_len[i] + 1;
     }
-    out.saddle_nodes.resize(num_saddles);
+    out.nodes.resize(num_saddles);
   }
 
   auto cuda_opts = torch::TensorOptions().device(dev);
@@ -219,30 +232,32 @@ SaddleNodes trace_raw_arcs_geometry(const GradientData& gdata, const int* fast_c
       torch::from_blob(max_offsets.data(), {num_saddles * 2 + 1}, torch::kInt32).to(dev, /*non_blocking=*/true);
   torch::Tensor d_min_offsets =
       torch::from_blob(min_offsets.data(), {num_saddles * 2 + 1}, torch::kInt32).to(dev, /*non_blocking=*/true);
-
+  torch::Tensor d_paired_with = gdata.d_paired_with.get();
+  torch::Tensor d_saddles = gdata.d_saddles.get();
   {
     RECORD_FUNCTION("kernel", {});
     // Extract raw pointers and dispatch to standard CUDA kernel
     launch_trace_raw_arcs_geometry_cuda(
-        gdata.d_paired_with.data_ptr<int>(), d_fast_crit_map.data_ptr<int>(), gdata.d_saddles.data_ptr<int>(),
+        d_paired_with.data_ptr<int>(), d_fast_crit_map.data_ptr<int>(), d_saddles.data_ptr<int>(),
         d_max_offsets.data_ptr<int>(), d_min_offsets.data_ptr<int>(), d_flat_max.data_ptr<int>(),
         d_flat_min.data_ptr<int>(), d_saddle_nodes.data_ptr<uint8_t>(), H, W, Nx, num_saddles);
   }
 
-  out.flat_max_geom = d_flat_max.cpu();
-  out.flat_min_geom = d_flat_min.cpu();
+  // out.flat_max_geom = d_flat_max.cpu();
+  // out.flat_min_geom = d_flat_min.cpu();
+  out.flat_max_geom.copy_from_tensor(d_flat_max, torch::TensorOptions().device(torch::kCPU).dtype(torch::kInt32));
+  out.flat_min_geom.copy_from_tensor(d_flat_min, torch::TensorOptions().device(torch::kCPU).dtype(torch::kInt32));
 
-  torch::from_blob(out.saddle_nodes.data(), {(long)(num_saddles * sizeof(SaddleNode))}, torch::kUInt8)
-      .copy_(d_saddle_nodes);
-
-  return out;
+  torch::from_blob(out.nodes.data(), {(long)(num_saddles * sizeof(SaddleNode))}, torch::kUInt8).copy_(d_saddle_nodes);
 }
 
-void simplify_arcs_geometry(SaddleNodes& sn, int num_crit_maxes, int num_crit_mins,
-                            std::vector<CancelEvent>& min_cancellations, std::vector<CancelEvent>& max_cancellations) {
+template <typename Workspace>
+void simplify_arcs_geometry(Workspace& ws, SaddleNodes& sn, int num_crit_maxes, int num_crit_mins,
+                            std::vector<cpu::CancelEvent>& min_cancellations,
+                            std::vector<cpu::CancelEvent>& max_cancellations) {
   RECORD_FUNCTION("simplify_arcs_geometry_cuda_dispatch", {});
 
-  int num_saddles = sn.saddle_nodes.size();
+  int num_saddles = sn.nodes.size();
   int N2 = num_saddles * 2;
 
   std::vector<int> max_parent(num_crit_maxes), min_parent(num_crit_mins);
@@ -260,20 +275,20 @@ void simplify_arcs_geometry(SaddleNodes& sn, int num_crit_maxes, int num_crit_mi
     at::parallel_for(0, num_saddles, 1024, [&](int64_t start, int64_t end) {
       for (int64_t i = start; i < end; ++i) {
         int idx = static_cast<int>(i);
-        init_t_max[2 * idx] = sn.saddle_nodes[idx].max_arcs[0].target;
-        init_t_max[2 * idx + 1] = sn.saddle_nodes[idx].max_arcs[1].target;
-        init_t_min[2 * idx] = sn.saddle_nodes[idx].min_arcs[0].target;
-        init_t_min[2 * idx + 1] = sn.saddle_nodes[idx].min_arcs[1].target;
+        init_t_max[2 * idx] = sn.nodes[idx].max_arcs[0].target;
+        init_t_max[2 * idx + 1] = sn.nodes[idx].max_arcs[1].target;
+        init_t_min[2 * idx] = sn.nodes[idx].min_arcs[0].target;
+        init_t_min[2 * idx + 1] = sn.nodes[idx].min_arcs[1].target;
 
-        base_max_len[2 * idx] = sn.saddle_nodes[idx].max_arcs[0].length;
-        base_max_len[2 * idx + 1] = sn.saddle_nodes[idx].max_arcs[1].length;
-        base_max_offset[2 * idx] = sn.saddle_nodes[idx].max_arcs[0].offset;
-        base_max_offset[2 * idx + 1] = sn.saddle_nodes[idx].max_arcs[1].offset;
+        base_max_len[2 * idx] = sn.nodes[idx].max_arcs[0].length;
+        base_max_len[2 * idx + 1] = sn.nodes[idx].max_arcs[1].length;
+        base_max_offset[2 * idx] = sn.nodes[idx].max_arcs[0].offset;
+        base_max_offset[2 * idx + 1] = sn.nodes[idx].max_arcs[1].offset;
 
-        base_min_len[2 * idx] = sn.saddle_nodes[idx].min_arcs[0].length;
-        base_min_len[2 * idx + 1] = sn.saddle_nodes[idx].min_arcs[1].length;
-        base_min_offset[2 * idx] = sn.saddle_nodes[idx].min_arcs[0].offset;
-        base_min_offset[2 * idx + 1] = sn.saddle_nodes[idx].min_arcs[1].offset;
+        base_min_len[2 * idx] = sn.nodes[idx].min_arcs[0].length;
+        base_min_len[2 * idx + 1] = sn.nodes[idx].min_arcs[1].length;
+        base_min_offset[2 * idx] = sn.nodes[idx].min_arcs[0].offset;
+        base_min_offset[2 * idx + 1] = sn.nodes[idx].min_arcs[1].offset;
       }
     });
   }
@@ -283,7 +298,7 @@ void simplify_arcs_geometry(SaddleNodes& sn, int num_crit_maxes, int num_crit_mi
 
   // MAXIMA PREP
   int num_max_cancels = max_cancellations.size();
-  size_t safe_max_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, min_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR);
+  size_t safe_max_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, max_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR);
 
   torch::Tensor d_max_init_t = torch::from_blob(init_t_max.data(), {N2}, torch::kInt32).to(dev, true);
   torch::Tensor d_max_base_lens = torch::from_blob(base_max_len.data(), {N2}, torch::kInt32).to(dev, true);
@@ -373,8 +388,8 @@ void simplify_arcs_geometry(SaddleNodes& sn, int num_crit_maxes, int num_crit_mi
     std::memcpy(cpu_min_dag.data(), cpu_min_dag_tensor.data_ptr(), min_dag_sz * sizeof(GPUDAGNode));
   }
 
-  assemble_simplified_geometry<GPUDAGNode, GPUPathRef>(
-      sn, max_alive, min_alive, init_t_max, init_t_min, base_max_len, base_min_len, base_max_offset, base_min_offset,
+  cpu::assemble_simplified_geometry<GPUDAGNode, GPUPathRef>(
+      ws, max_alive, min_alive, init_t_max, init_t_min, base_max_len, base_min_len, base_max_offset, base_min_offset,
       max_parent, min_parent, max_weight, min_weight, cpu_max_dag, max_dag_sz, cpu_min_dag, min_dag_sz);
 }
 }  // namespace gpu

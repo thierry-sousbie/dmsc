@@ -1,11 +1,13 @@
 import os
-import torch
+
 import numpy as np
 import pytest
+import torch
 
 from csrc.dmsc import compute_dmsc
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+
 
 @pytest.fixture(scope="module")
 def landscape():
@@ -26,16 +28,16 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
     assert len(gt_dict["sad_pts"]) == len(computed_ms.sad_pts), "Number of saddles differ"
 
     # 2. Check sets of critical points (unordered equivalence)
-    assert set(gt_dict["max_pts"].numpy()) == set(computed_ms.max_pts.cpu().numpy()), "Set of maxima differ"
-    assert set(gt_dict["min_pts"].numpy()) == set(computed_ms.min_pts.cpu().numpy()), "Set of minima differ"
-    assert set(gt_dict["sad_pts"].numpy()) == set(computed_ms.sad_pts.cpu().numpy()), "Set of saddles differ"
+    assert set(gt_dict["max_pts"].cpu().numpy()) == set(computed_ms.max_pts.cpu().numpy()), "Set of maxima differ"
+    assert set(gt_dict["min_pts"].cpu().numpy()) == set(computed_ms.min_pts.cpu().numpy()), "Set of minima differ"
+    assert set(gt_dict["sad_pts"].cpu().numpy()) == set(computed_ms.sad_pts.cpu().numpy()), "Set of saddles differ"
 
     # 3. Check persistence values (sorted equivalence)
-    gt_p_max = np.sort(gt_dict["p_max"].numpy())
+    gt_p_max = np.sort(gt_dict["p_max"].cpu().numpy())
     comp_p_max = np.sort(computed_ms.p_max.cpu().numpy())
     assert np.allclose(gt_p_max, comp_p_max), "Persistence values for max-sad pairs differ"
 
-    gt_p_min = np.sort(gt_dict["p_min"].numpy())
+    gt_p_min = np.sort(gt_dict["p_min"].cpu().numpy())
     comp_p_min = np.sort(computed_ms.p_min.cpu().numpy())
     assert np.allclose(gt_p_min, comp_p_min), "Persistence values for min-sad pairs differ"
 
@@ -52,8 +54,8 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
         if gt_regions is None or gt_regions.numel() == 0:
             assert comp_regions is None or comp_regions.numel() == 0
             return
-            
-        gt_arr = gt_regions.numpy().flatten()
+
+        gt_arr = gt_regions.cpu().numpy().flatten()
         comp_arr = comp_regions.cpu().numpy().flatten()
         assert len(gt_arr) == len(comp_arr), f"{name} shape mismatch"
 
@@ -82,11 +84,10 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
     check_regions(gt_dict["basins"], computed_ms.basins, "Basins")
 
 
-@pytest.mark.parametrize("mode, threads, device_str", [
-    ("st", 1, "cpu"),
-    ("mt", 8, "cpu"),
-    ("gpu", 8, "mps" if torch.backends.mps.is_available() else "cuda")
-])
+@pytest.mark.parametrize(
+    "mode, threads, device_str",
+    [("st", 1, "cpu"), ("mt", 8, "cpu"), ("gpu", 8, "mps" if torch.backends.mps.is_available() else "cuda")],
+)
 @pytest.mark.parametrize("is_dual", [False, True])
 @pytest.mark.parametrize("is_filtered, threshold", [(False, -1.0), (True, 0.15)])
 def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filtered, threshold):
@@ -94,7 +95,7 @@ def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filte
     # The extension will throw an error if the GPU device is missing on this platform
     if device.type == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
-    
+
     img = landscape.to(device)
     torch.set_num_threads(threads)
 
@@ -102,10 +103,10 @@ def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filte
     flt_str = "flt" if is_filtered else "raw"
     gt_filename = f"ms_{mode}_{dual_str}_{flt_str}.pt"
     gt_path = os.path.join(DATA_DIR, gt_filename)
-    
+
     if not os.path.exists(gt_path):
         pytest.fail(f"Ground truth {gt_path} not found.")
-        
+
     gt_dict = torch.load(gt_path, weights_only=False)
 
     # Compute MS complex

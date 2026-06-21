@@ -23,17 +23,36 @@
 #include "./arcs_topology_struct.hxx"
 #include "./cell_compare.hxx"
 
-template <bool IS_DUAL>
-void compute_ppairs_and_simplify(float persistence_threshold, bool trace_arcs, std::vector<int>& fast_crit_map,
-                                 std::vector<SadEvent>& sorted_min_saddles, std::vector<SadEvent>& sorted_max_saddles,
-                                 std::vector<int>& crit_mins, std::vector<int>& crit_maxes,
-                                 const std::vector<float>& crit_min_vals, const std::vector<float>& crit_maxes_vals,
-                                 std::vector<bool>& min_alive, std::vector<bool>& max_alive, UnionFind& uf_min,
-                                 UnionFind& uf_max, std::vector<CancelEvent>& min_cancellations,
-                                 std::vector<CancelEvent>& max_cancellations) {
+namespace cpu {
+
+template <bool IS_DUAL, typename Workspace>
+void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, bool trace_arcs) {
   RECORD_FUNCTION("persistence_cpu", {});
-  std::vector<int> safe_crit_map;
-  if (trace_arcs) safe_crit_map = fast_crit_map;
+  auto& fast_crit_map = ws.hlp.fast_crit_map;
+  auto& sorted_min_saddles = ws.arcs_topology.sorted_min_saddles;
+  auto& sorted_max_saddles = ws.arcs_topology.sorted_max_saddles;
+  auto& crit_mins = ws.gradient_data.cp.mins;
+  auto& crit_maxes = ws.gradient_data.cp.maxes;
+  auto& crit_min_vals = ws.hlp.crit_min_vals;
+  auto& crit_max_vals = ws.hlp.crit_max_vals;
+
+  auto& min_alive = ws.p_data.min_alive;
+  auto& max_alive = ws.p_data.max_alive;
+  auto& uf_min = ws.p_data.uf_min;
+  auto& uf_max = ws.p_data.uf_max;
+  auto& min_cancellations = ws.p_data.min_cancellations;
+  auto& max_cancellations = ws.p_data.max_cancellations;
+  auto& safe_crit_map = ws.hlp.safe_crit_map;
+
+  min_alive.assign(crit_mins.size(), true);
+  max_alive.assign(crit_maxes.size(), true);
+  uf_min.reset(crit_mins.size());
+  uf_max.reset(crit_maxes.size());
+  if (trace_arcs) {
+    min_cancellations.clear();
+    max_cancellations.clear();
+    safe_crit_map.assign(fast_crit_map.begin(), fast_crit_map.end());
+  }
 
   tbb::parallel_invoke(
       // Minima
@@ -112,8 +131,8 @@ void compute_ppairs_and_simplify(float persistence_threshold, bool trace_arcs, s
           } else if (r2_g == -1) {
             dying_g = r1_g;
           } else {
-            float val1 = crit_maxes_vals[r1_g];
-            float val2 = crit_maxes_vals[r2_g];
+            float val1 = crit_max_vals[r1_g];
+            float val2 = crit_max_vals[r2_g];
             if (value_less<IS_DUAL>(val1, r1_g, val2, r2_g)) {
               survivor_g = r2_g;
               dying_g = r1_g;
@@ -123,7 +142,7 @@ void compute_ppairs_and_simplify(float persistence_threshold, bool trace_arcs, s
             }
           }
 
-          ev.persistence = IS_DUAL ? ev.s_val - crit_maxes_vals[dying_g] : crit_maxes_vals[dying_g] - ev.s_val;
+          ev.persistence = IS_DUAL ? ev.s_val - crit_max_vals[dying_g] : crit_max_vals[dying_g] - ev.s_val;
           ev.pair_id = crit_maxes[dying_g];
 
           uf_max_global.unite_from_root(dying_g, survivor_g);
@@ -161,3 +180,5 @@ void compute_ppairs_and_simplify(float persistence_threshold, bool trace_arcs, s
         });
   }
 }
+
+}  // namespace cpu

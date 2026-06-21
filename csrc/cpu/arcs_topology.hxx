@@ -1,12 +1,15 @@
 #pragma once
 
 #include <tbb/parallel_sort.h>
+#include <torch/extension.h>
 
 #include <vector>
 
 #include "../cell_complex.hxx"
 #include "./arcs_topology_struct.hxx"
 #include "./cell_compare.hxx"
+
+namespace cpu {
 
 struct TraceRes {
   int target;
@@ -61,17 +64,47 @@ TraceRes trace_vertices_with_length(const Container& gradient_pairs, int start_v
   return {curr, steps};
 }
 
-template <bool IS_DUAL, typename scalar_t, typename GradientData>
-ArcsTopology trace_from_saddles(const scalar_t* data, const GradientData& gd, int H, int W, int Nx) {
-  const auto& paired_with = gd.paired_with;
-  const auto& crit_saddles = gd.cp.saddles;
+template <bool IS_DUAL, typename Workspace>
+void update_crit_mids(Workspace& ws) {
+  RECORD_FUNCTION("helpers_saddle_nodes_mid", {});
+  auto& max_saddles = ws.arcs_topology.sorted_max_saddles;
+  auto& min_saddles = ws.arcs_topology.sorted_min_saddles;
+  const auto& fast_crit_map = ws.hlp.fast_crit_map;
+
+  // localize the mapping to the structure for cache, making the persistence thresholding loop faster
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, min_saddles.size(), 1024), [&](const tbb::blocked_range<size_t>& r) {
+    for (size_t i = r.begin(); i != r.end(); ++i) {
+      auto& ev = min_saddles[i];
+      ev.c1_mid = (ev.c1_id != -1) ? fast_crit_map[ev.c1_id] : -1;
+      ev.c2_mid = (ev.c2_id != -1) ? fast_crit_map[ev.c2_id] : -1;
+    }
+  });
+
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, max_saddles.size(), 1024), [&](const tbb::blocked_range<size_t>& r) {
+    for (size_t i = r.begin(); i != r.end(); ++i) {
+      auto& ev = max_saddles[i];
+      ev.c1_mid = (ev.c1_id != -1) ? fast_crit_map[ev.c1_id] : -1;
+      ev.c2_mid = (ev.c2_id != -1) ? fast_crit_map[ev.c2_id] : -1;
+    }
+  });
+}
+
+template <bool IS_DUAL, typename Workspace, typename scalar_t = float>
+void trace_from_saddles(Workspace& ws, const torch::Tensor& scalar_field) {
+  int H = ws.H;
+  int W = ws.W;
+  int Nx = ws.Nx;
+  auto& arcs_topology = ws.arcs_topology;
+  const auto& paired_with = ws.gradient_data.paired_with;
+  const auto& crit_saddles = ws.gradient_data.cp.saddles;
+  const scalar_t* data = scalar_field.data_ptr<scalar_t>();
 
   int num_saddles = crit_saddles.size();
-  ArcsTopology at;
-  at.sorted_max_saddles.resize(num_saddles);
-  at.sorted_min_saddles.resize(num_saddles);
-  at.max_arcs_len.assign(num_saddles * 2, 0);
-  at.min_arcs_len.assign(num_saddles * 2, 0);
+
+  arcs_topology.sorted_max_saddles.resize(num_saddles);
+  arcs_topology.sorted_min_saddles.resize(num_saddles);
+  arcs_topology.max_arcs_len.assign(num_saddles * 2, 0);
+  arcs_topology.min_arcs_len.assign(num_saddles * 2, 0);
 
   std::vector<size_t> sorted_max_indices(num_saddles);
   std::vector<scalar_t> saddle_value(num_saddles);
@@ -113,15 +146,15 @@ ArcsTopology trace_from_saddles(const scalar_t* data, const GradientData& gd, in
       TraceRes max1 = (f1 != -1) ? trace_faces_with_length(paired_with.data(), f1, Nx, H, W) : TraceRes{-1, 0};
       TraceRes max2 = (f2 != -1) ? trace_faces_with_length(paired_with.data(), f2, Nx, H, W) : TraceRes{-1, 0};
 
-      at.sorted_max_saddles[j] = {-999, -1, -1, -1, -1, 0.0f};
+      arcs_topology.sorted_max_saddles[j] = {-999, -1, -1, -1, -1, 0.0f};
       if (max1.target != -1 && max2.target != -1) {
-        at.sorted_max_saddles[j] = {s_id, max1.target, max2.target, -1, -1, v_s};
-        at.max_arcs_len[2 * max_id] = max1.length;
-        at.max_arcs_len[2 * max_id + 1] = max2.length;
+        arcs_topology.sorted_max_saddles[j] = {s_id, max1.target, max2.target, -1, -1, v_s};
+        arcs_topology.max_arcs_len[2 * max_id] = max1.length;
+        arcs_topology.max_arcs_len[2 * max_id + 1] = max2.length;
       } else if ((max1.target != -1 && max2.target == -1) || (max1.target == -1 && max2.target != -1)) {
         int max_real = (max1.target != -1) ? max1.target : max2.target;
-        at.sorted_max_saddles[j] = {s_id, max_real, -1, -1, -1, v_s};
-        at.max_arcs_len[2 * max_id] = (max1.target != -1) ? max1.length : max2.length;
+        arcs_topology.sorted_max_saddles[j] = {s_id, max_real, -1, -1, -1, v_s};
+        arcs_topology.max_arcs_len[2 * max_id] = (max1.target != -1) ? max1.length : max2.length;
       }
     }
   });
@@ -146,23 +179,20 @@ ArcsTopology trace_from_saddles(const scalar_t* data, const GradientData& gd, in
       TraceRes min1 = (v1 != -1) ? trace_vertices_with_length(paired_with.data(), v1, Nx, H, W) : TraceRes{-1, 0};
       TraceRes min2 = (v2 != -1) ? trace_vertices_with_length(paired_with.data(), v2, Nx, H, W) : TraceRes{-1, 0};
 
-      at.sorted_min_saddles[j] = {-999, -1, -1, -1, -1, 0.0f};
+      arcs_topology.sorted_min_saddles[j] = {-999, -1, -1, -1, -1, 0.0f};
       if (min1.target != -1 && min2.target != -1) {
-        at.sorted_min_saddles[j] = {s_id, min1.target, min2.target, -1, -1, v_s};
-        at.min_arcs_len[2 * min_id] = min1.length;
-        at.min_arcs_len[2 * min_id + 1] = min2.length;
+        arcs_topology.sorted_min_saddles[j] = {s_id, min1.target, min2.target, -1, -1, v_s};
+        arcs_topology.min_arcs_len[2 * min_id] = min1.length;
+        arcs_topology.min_arcs_len[2 * min_id + 1] = min2.length;
       } else if ((min1.target != -1 && min2.target == -1) || (min1.target == -1 && min2.target != -1)) {
         int min_real = (min1.target != -1) ? min1.target : min2.target;
-        at.sorted_min_saddles[j] = {s_id, min_real, -1, -1, -1, v_s};
-        at.min_arcs_len[2 * min_id] = (min1.target != -1) ? min1.length : min2.length;
+        arcs_topology.sorted_min_saddles[j] = {s_id, min_real, -1, -1, -1, v_s};
+        arcs_topology.min_arcs_len[2 * min_id] = (min1.target != -1) ? min1.length : min2.length;
       }
     }
   });
 
-  // --- MS-complex, persistence pairs and simplification ---
-
-  // tbb::parallel_sort(at.max_saddles.begin(), at.max_saddles.end(), SadEventGreater<IS_DUAL>{});
-  // tbb::parallel_sort(at.min_saddles.begin(), at.min_saddles.end(), SadEventLess<IS_DUAL>{});
-
-  return at;
+  update_crit_mids<IS_DUAL>(ws);
 }
+
+}  // namespace cpu

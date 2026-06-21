@@ -8,9 +8,8 @@
 #define CACHE_IS_EMPTY -2
 #define CACHE_DEPTH 16
 
-// ---------------------------------------------------------
-// INLINE TRACE HELPERS
-// ---------------------------------------------------------
+namespace cpu {
+
 inline int trace_faces(int start_face, const int* paired_with, int H, int W, int Nx, int* out_groups, int* cached_value,
                        int* path_buffer) {
   if (start_face == -1) return -1;
@@ -94,25 +93,31 @@ inline int trace_vertices(int start_v, const int* paired_with, int H, int W, int
   return curr;
 }
 
-template <bool IS_DUAL = false>
-CellGroupsData compute_cell_groups(const std::vector<int>& paired_with, const std::vector<int>& fast_crit_map,
-                                   UnionFind& uf_max, const std::vector<int>& crit_maxes, UnionFind& uf_min,
-                                   const std::vector<int>& crit_mins, const std::vector<bool>& max_is_alive,
-                                   const std::vector<bool>& min_is_alive, int H, int W) {
+template <typename Workspace>
+void compute_cell_groups(Workspace& ws) {
   RECORD_FUNCTION("cell_groups_cpu", {});
+  int H = ws.H;
+  int W = ws.W;
+  const auto& paired_with = ws.gradient_data.paired_with;
+  const auto& fast_crit_map = ws.hlp.fast_crit_map;
+  const auto& crit_maxes = ws.gradient_data.cp.maxes;
+  const auto& crit_mins = ws.gradient_data.cp.mins;
+
+  auto& uf_max = ws.p_data.uf_max;
+  auto& uf_min = ws.p_data.uf_min;
+  const auto& max_alive = ws.p_data.max_alive;
+  const auto& min_alive = ws.p_data.min_alive;
 
   int Nx = W + 1;
   int num_faces = (H + 1) * (W + 1);
   int num_vertices = H * W;
 
   auto i_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
+  torch::Tensor vertex_groups = ws.cell_groups.vertex_groups.request_full({H, W}, i_opts, CACHE_IS_EMPTY);
+  torch::Tensor face_groups = ws.cell_groups.face_groups.request_full({H + 1, W + 1}, i_opts, CACHE_IS_EMPTY);
 
-  CellGroupsData cg_data;
-  cg_data.vertex_groups = torch::full({H, W}, CACHE_IS_EMPTY, i_opts);
-  cg_data.face_groups = torch::full({H + 1, W + 1}, CACHE_IS_EMPTY, i_opts);
-
-  auto face_groups = cg_data.face_groups.data_ptr<int>();
-  auto vertex_groups = cg_data.vertex_groups.data_ptr<int>();
+  auto face_groups_ptr = face_groups.data_ptr<int>();
+  auto vertex_groups_ptr = vertex_groups.data_ptr<int>();
 
   // Assumes gradient_data holds the gradient pairs
   const int* paired_with_ptr = &paired_with[0];
@@ -130,13 +135,13 @@ CellGroupsData compute_cell_groups(const std::vector<int>& paired_with, const st
         [&]() {
           int region_counter = 0;
           for (size_t i = 0; i < crit_maxes.size(); ++i) {
-            if (max_is_alive[i]) fast_region_id[crit_maxes[i]] = region_counter++;
+            if (max_alive[i]) fast_region_id[crit_maxes[i]] = region_counter++;
           }
         },
         [&]() {
           int region_counter = 0;
           for (size_t i = 0; i < crit_mins.size(); ++i) {
-            if (min_is_alive[i]) fast_region_id[crit_mins[i]] = region_counter++;
+            if (min_alive[i]) fast_region_id[crit_mins[i]] = region_counter++;
           }
         });
   }
@@ -155,7 +160,8 @@ CellGroupsData compute_cell_groups(const std::vector<int>& paired_with, const st
         int cached_value = CACHE_IS_EMPTY;
         int path_buffer[CACHE_DEPTH];
 
-        int initial_max = trace_faces(start_face, paired_with_ptr, H, W, Nx, face_groups, &cached_value, path_buffer);
+        int initial_max =
+            trace_faces(start_face, paired_with_ptr, H, W, Nx, face_groups_ptr, &cached_value, path_buffer);
 
         if (cached_value != CACHE_IS_EMPTY) {
           final_val = cached_value;
@@ -167,14 +173,14 @@ CellGroupsData compute_cell_groups(const std::vector<int>& paired_with, const st
           }
         }
 
-        face_groups[i] = final_val;
+        face_groups_ptr[i] = final_val;
 
         // Path Compression
         if (final_val != -1) {
           for (int k = 0; k < CACHE_DEPTH; ++k) {
             int flat_idx = path_buffer[k];
             if (flat_idx == CACHE_IS_EMPTY) break;
-            face_groups[flat_idx] = final_val;
+            face_groups_ptr[flat_idx] = final_val;
           }
         }
       }
@@ -195,7 +201,7 @@ CellGroupsData compute_cell_groups(const std::vector<int>& paired_with, const st
         int path_buffer[CACHE_DEPTH];
 
         int initial_min =
-            trace_vertices(start_vertex, paired_with_ptr, H, W, Nx, vertex_groups, &cached_value, path_buffer);
+            trace_vertices(start_vertex, paired_with_ptr, H, W, Nx, vertex_groups_ptr, &cached_value, path_buffer);
 
         if (cached_value != CACHE_IS_EMPTY) {
           final_val = cached_value;
@@ -207,18 +213,19 @@ CellGroupsData compute_cell_groups(const std::vector<int>& paired_with, const st
           }
         }
 
-        vertex_groups[i] = final_val;
+        vertex_groups_ptr[i] = final_val;
 
         // Path Compression
         if (final_val != -1) {
           for (int k = 0; k < CACHE_DEPTH; ++k) {
             int flat_idx = path_buffer[k];
             if (flat_idx == CACHE_IS_EMPTY) break;
-            vertex_groups[flat_idx] = final_val;
+            vertex_groups_ptr[flat_idx] = final_val;
           }
         }
       }
     });
   }
-  return cg_data;
 }
+
+}  // namespace cpu

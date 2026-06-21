@@ -3,6 +3,7 @@
 #include <torch/extension.h>
 
 #include "../../cell_complex.hxx"
+#include "../gradient_struct.hxx"
 
 __global__ void extract_critical_points_kernel(const int* __restrict__ paired_with, int* __restrict__ out_vertices,
                                                int* __restrict__ out_edges, int* __restrict__ out_faces,
@@ -70,9 +71,7 @@ __global__ void extract_critical_points_kernel(const int* __restrict__ paired_wi
   if (is_face) out_faces[f_base + f_offset] = id;
 }
 
-void launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx,
-                                         std::vector<int>& topological_mins, std::vector<int>& topological_saddles,
-                                         std::vector<int>& topological_maxes, bool is_dual) {
+gpu::CriticalPointsAsTensors launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx) {
   int num_cells = 4 * (H + 1) * (W + 1);
   int max_expected = num_cells / 3;
 
@@ -97,24 +96,9 @@ void launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W,
   int edge_count = h_counters[1];
   int face_count = h_counters[2];
 
-  if (is_dual) {
-    topological_mins.resize(face_count);
-    cudaMemcpy(topological_mins.data(), d_faces.data_ptr<int>(), face_count * sizeof(int), cudaMemcpyDeviceToHost);
+  torch::Tensor exact_vertices = d_vertices.slice(0, 0, vertex_count);
+  torch::Tensor exact_edges = d_edges.slice(0, 0, edge_count);
+  torch::Tensor exact_faces = d_faces.slice(0, 0, face_count);
 
-    topological_saddles.resize(edge_count);
-    cudaMemcpy(topological_saddles.data(), d_edges.data_ptr<int>(), edge_count * sizeof(int), cudaMemcpyDeviceToHost);
-
-    topological_maxes.resize(vertex_count);
-    cudaMemcpy(topological_maxes.data(), d_vertices.data_ptr<int>(), vertex_count * sizeof(int),
-               cudaMemcpyDeviceToHost);
-  } else {
-    topological_mins.resize(vertex_count);
-    cudaMemcpy(topological_mins.data(), d_vertices.data_ptr<int>(), vertex_count * sizeof(int), cudaMemcpyDeviceToHost);
-
-    topological_saddles.resize(edge_count);
-    cudaMemcpy(topological_saddles.data(), d_edges.data_ptr<int>(), edge_count * sizeof(int), cudaMemcpyDeviceToHost);
-
-    topological_maxes.resize(face_count);
-    cudaMemcpy(topological_maxes.data(), d_faces.data_ptr<int>(), face_count * sizeof(int), cudaMemcpyDeviceToHost);
-  }
+  return {exact_faces, exact_edges, exact_vertices};
 }

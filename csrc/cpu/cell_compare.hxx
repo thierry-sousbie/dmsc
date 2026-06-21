@@ -6,6 +6,8 @@
 
 #include "../cell_complex.hxx"
 
+namespace cpu {
+
 template <bool IS_DUAL = false>
 bool value_less(float val1, int id1, float val2, int id2) {
   if constexpr (!IS_DUAL) {
@@ -117,3 +119,5 @@ template <bool IS_DUAL = false>
 int get_lowest_face(int y, int x, int H, int W, int Nx, const float* data) {
   return get_highest_face<!IS_DUAL>(y, x, H, W, Nx, data);
 }
+
+}  // namespace cpu

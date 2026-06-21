@@ -3,8 +3,7 @@
 #include <tuple>
 #include <vector>
 
-namespace cpu {
-
+namespace gpu {
 struct SadEvent {
   int saddle_id;
   int c1_id;
@@ -45,5 +44,4 @@ struct ArcsTopology {
     // sorted_min_saddles.clear();
   }
 };
-
-}  // namespace cpu
+}  // namespace gpu

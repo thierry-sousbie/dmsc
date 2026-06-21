@@ -20,6 +20,8 @@
 
 #include "./critical_points_struct.hxx"
 
+namespace cpu {
+
 void extract_critical_points(const std::vector<int>& paired_with, int H, int W, int Nx, std::vector<int>& crit_mins,
                              std::vector<int>& crit_saddles, std::vector<int>& crit_maxes) {
   RECORD_FUNCTION("extract_critical_points_cpu", {});
@@ -72,3 +74,5 @@ void extract_critical_points(const std::vector<int>& paired_with, int H, int W, 
     crit_maxes.insert(crit_maxes.end(), local_cp.maxes.begin(), local_cp.maxes.end());
   }
 }
+
+}  // namespace cpu
