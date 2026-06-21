@@ -78,7 +78,9 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
           } else {
             float val1 = crit_min_vals[r1_g];
             float val2 = crit_min_vals[r2_g];
-            if (value_greater<IS_DUAL>(val1, r1_g, val2, r2_g)) {
+            int cell_id1 = crit_mins[r1_g];
+            int cell_id2 = crit_mins[r2_g];
+            if (value_greater<IS_DUAL>(val1, cell_id1, val2, cell_id2)) {
               survivor_g = r2_g;
               dying_g = r1_g;
             } else {
@@ -133,7 +135,9 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
           } else {
             float val1 = crit_max_vals[r1_g];
             float val2 = crit_max_vals[r2_g];
-            if (value_less<IS_DUAL>(val1, r1_g, val2, r2_g)) {
+            int cell_id1 = crit_maxes[r1_g];
+            int cell_id2 = crit_maxes[r2_g];
+            if (value_less<IS_DUAL>(val1, cell_id1, val2, cell_id2)) {
               survivor_g = r2_g;
               dying_g = r1_g;
             } else {

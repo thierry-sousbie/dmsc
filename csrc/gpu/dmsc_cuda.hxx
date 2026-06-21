@@ -22,6 +22,8 @@
 #include "./arcs_topology_helpers.hxx"
 #include "./gradient_struct.hxx"
 
+#define MAX_DAG_ALLOC_PER_PAIR_GPU 15
+
 void launch_gradient_cuda(const float* data, int* paired_with, int H, int W, bool is_dual);
 gpu::CriticalPointsAsTensors launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx);
 void launch_cell_groups_cuda(const float* data, const int* paired_with, const int* fast_crit_map, const int* uf_parent,
@@ -252,11 +254,13 @@ void trace_raw_arcs_geometry(Workspace& ws) {
 }
 
 template <typename Workspace>
-void simplify_arcs_geometry(Workspace& ws, SaddleNodes& sn, int num_crit_maxes, int num_crit_mins,
-                            std::vector<cpu::CancelEvent>& min_cancellations,
-                            std::vector<cpu::CancelEvent>& max_cancellations) {
-  RECORD_FUNCTION("simplify_arcs_geometry_cuda_dispatch", {});
-
+void simplify_arcs_geometry(Workspace& ws) {
+  RECORD_FUNCTION("simplify_arcs_geometry_cuda", {});
+  auto& min_cancellations = ws.p_data.min_cancellations;
+  auto& max_cancellations = ws.p_data.max_cancellations;
+  auto& sn = ws.saddle_nodes;
+  int num_crit_maxes = ws.gradient_data.cp.maxes.size();
+  int num_crit_mins = ws.gradient_data.cp.mins.size();
   int num_saddles = sn.nodes.size();
   int N2 = num_saddles * 2;
 
@@ -298,51 +302,60 @@ void simplify_arcs_geometry(Workspace& ws, SaddleNodes& sn, int num_crit_maxes, 
 
   // MAXIMA PREP
   int num_max_cancels = max_cancellations.size();
-  size_t safe_max_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, max_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR);
+  size_t safe_max_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, max_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR_GPU);
 
-  torch::Tensor d_max_init_t = torch::from_blob(init_t_max.data(), {N2}, torch::kInt32).to(dev, true);
-  torch::Tensor d_max_base_lens = torch::from_blob(base_max_len.data(), {N2}, torch::kInt32).to(dev, true);
-  torch::Tensor d_max_parent = torch::from_blob(max_parent.data(), {num_crit_maxes}, torch::kInt32).to(dev, true);
-  torch::Tensor d_max_weights =
-      torch::from_blob(max_weight.data(), {(long)(num_crit_maxes * sizeof(GPUPathRef))}, torch::kUInt8).to(dev, true);
-  torch::Tensor d_max_dag = torch::empty({(long)(safe_max_dag * sizeof(GPUDAGNode))}, byte_opts);
+  // min and max are independant
+  at::cuda::CUDAStream stream_max = at::cuda::getStreamFromPool();
+  at::cuda::CUDAStream stream_min = at::cuda::getStreamFromPool();
+
+  int max_dag_sz = 0;
+  torch::Tensor d_max_init_t, d_max_base_lens, d_max_parent, d_max_weights, d_max_cancels, d_max_alive, d_max_pending,
+      d_max_dag;
 
   std::vector<int> flat_max_cancels(num_max_cancels * 2);
   for (int i = 0; i < num_max_cancels; ++i) {
     flat_max_cancels[i * 2] = max_cancellations[i].s_idx;
     flat_max_cancels[i * 2 + 1] = max_cancellations[i].t_idx;
   }
-  torch::Tensor d_max_cancels =
-      torch::from_blob(flat_max_cancels.data(), {num_max_cancels * 2}, torch::kInt32).to(dev, true);
-  torch::Tensor d_max_alive = torch::ones({num_saddles}, byte_opts);
-  torch::Tensor d_max_pending = torch::ones({num_max_cancels}, byte_opts);
-  int max_dag_sz = 0;
 
-  // MINIMA PREP
+  {
+    at::cuda::CUDAStreamGuard guard(stream_max);
+    d_max_init_t = torch::from_blob(init_t_max.data(), {N2}, torch::kInt32).to(dev, true);
+    d_max_base_lens = torch::from_blob(base_max_len.data(), {N2}, torch::kInt32).to(dev, true);
+    d_max_parent = torch::from_blob(max_parent.data(), {num_crit_maxes}, torch::kInt32).to(dev, true);
+    d_max_weights =
+        torch::from_blob(max_weight.data(), {(long)(num_crit_maxes * sizeof(GPUPathRef))}, torch::kUInt8).to(dev, true);
+    d_max_dag = torch::empty({(long)(safe_max_dag * sizeof(GPUDAGNode))}, byte_opts);
+    d_max_cancels = torch::from_blob(flat_max_cancels.data(), {num_max_cancels * 2}, torch::kInt32).to(dev, true);
+    d_max_alive = torch::ones({num_saddles}, byte_opts);
+    d_max_pending = torch::ones({num_max_cancels}, byte_opts);
+  }
+
   int num_min_cancels = min_cancellations.size();
-  size_t safe_min_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, min_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR);
+  size_t safe_min_dag = std::max<size_t>(MIN_DAG_ALLOC_TOTAL, min_cancellations.size() * MAX_DAG_ALLOC_PER_PAIR_GPU);
 
-  torch::Tensor d_min_init_t = torch::from_blob(init_t_min.data(), {N2}, torch::kInt32).to(dev, true);
-  torch::Tensor d_min_base_lens = torch::from_blob(base_min_len.data(), {N2}, torch::kInt32).to(dev, true);
-  torch::Tensor d_min_parent = torch::from_blob(min_parent.data(), {num_crit_mins}, torch::kInt32).to(dev, true);
-  torch::Tensor d_min_weights =
-      torch::from_blob(min_weight.data(), {(long)(num_crit_mins * sizeof(GPUPathRef))}, torch::kUInt8).to(dev, true);
-  torch::Tensor d_min_dag = torch::empty({(long)(safe_min_dag * sizeof(GPUDAGNode))}, byte_opts);
+  int min_dag_sz = 0;
+  torch::Tensor d_min_init_t, d_min_base_lens, d_min_parent, d_min_weights, d_min_cancels, d_min_alive, d_min_pending,
+      d_min_dag;
 
   std::vector<int> flat_min_cancels(num_min_cancels * 2);
   for (int i = 0; i < num_min_cancels; ++i) {
     flat_min_cancels[i * 2] = min_cancellations[i].s_idx;
     flat_min_cancels[i * 2 + 1] = min_cancellations[i].t_idx;
   }
-  torch::Tensor d_min_cancels =
-      torch::from_blob(flat_min_cancels.data(), {num_min_cancels * 2}, torch::kInt32).to(dev, true);
-  torch::Tensor d_min_alive = torch::ones({num_saddles}, byte_opts);
-  torch::Tensor d_min_pending = torch::ones({num_min_cancels}, byte_opts);
-  int min_dag_sz = 0;
 
-  // DISPATCH, min and max being independant
-  at::cuda::CUDAStream stream_max = at::cuda::getStreamFromPool();
-  at::cuda::CUDAStream stream_min = at::cuda::getStreamFromPool();
+  {
+    at::cuda::CUDAStreamGuard guard(stream_min);
+    d_min_init_t = torch::from_blob(init_t_min.data(), {N2}, torch::kInt32).to(dev, true);
+    d_min_base_lens = torch::from_blob(base_min_len.data(), {N2}, torch::kInt32).to(dev, true);
+    d_min_parent = torch::from_blob(min_parent.data(), {num_crit_mins}, torch::kInt32).to(dev, true);
+    d_min_weights =
+        torch::from_blob(min_weight.data(), {(long)(num_crit_mins * sizeof(GPUPathRef))}, torch::kUInt8).to(dev, true);
+    d_min_dag = torch::empty({(long)(safe_min_dag * sizeof(GPUDAGNode))}, byte_opts);
+    d_min_cancels = torch::from_blob(flat_min_cancels.data(), {num_min_cancels * 2}, torch::kInt32).to(dev, true);
+    d_min_alive = torch::ones({num_saddles}, byte_opts);
+    d_min_pending = torch::ones({num_min_cancels}, byte_opts);
+  }
   {
     RECORD_FUNCTION("CUDA_Iterative_Contraction", {});
     launch_simplify_arcs_cuda(d_max_cancels, d_max_init_t, d_max_parent, d_max_weights, d_max_dag, d_max_base_lens,
@@ -356,40 +369,78 @@ void simplify_arcs_geometry(Workspace& ws, SaddleNodes& sn, int num_crit_maxes, 
   stream_min.synchronize();
 
   // RETRIEVE AND ASSEMBLE
-  torch::Tensor cpu_max_parent = d_max_parent.cpu();
-  std::memcpy(max_parent.data(), cpu_max_parent.data_ptr<int>(), num_crit_maxes * sizeof(int));
-  torch::Tensor cpu_min_parent = d_min_parent.cpu();
-  std::memcpy(min_parent.data(), cpu_min_parent.data_ptr<int>(), num_crit_mins * sizeof(int));
+  // Use copy_ instead of .cpu() to avoid memory allocation overhead
+  torch::from_blob(max_parent.data(), {num_crit_maxes}, torch::kInt32).copy_(d_max_parent, /*non_blocking=*/false);
+  torch::from_blob(min_parent.data(), {num_crit_mins}, torch::kInt32).copy_(d_min_parent, /*non_blocking=*/false);
 
   std::vector<uint8_t> max_alive(num_saddles);
-  torch::Tensor cpu_max_alive = d_max_alive.cpu();
-  std::memcpy(max_alive.data(), cpu_max_alive.data_ptr<uint8_t>(), num_saddles * sizeof(uint8_t));
+  torch::from_blob(max_alive.data(), {num_saddles}, torch::kUInt8).copy_(d_max_alive, /*non_blocking=*/false);
 
   std::vector<uint8_t> min_alive(num_saddles);
-  torch::Tensor cpu_min_alive = d_min_alive.cpu();
-  std::memcpy(min_alive.data(), cpu_min_alive.data_ptr<uint8_t>(), num_saddles * sizeof(uint8_t));
+  torch::from_blob(min_alive.data(), {num_saddles}, torch::kUInt8).copy_(d_min_alive, /*non_blocking=*/false);
 
-  torch::Tensor cpu_max_weights = d_max_weights.cpu();
-  std::memcpy(max_weight.data(), cpu_max_weights.data_ptr(), num_crit_maxes * sizeof(GPUPathRef));
-  torch::Tensor cpu_min_weights = d_min_weights.cpu();
-  std::memcpy(min_weight.data(), cpu_min_weights.data_ptr(), num_crit_mins * sizeof(GPUPathRef));
+  torch::from_blob(max_weight.data(), {(long)(num_crit_maxes * sizeof(GPUPathRef))}, torch::kUInt8)
+      .copy_(d_max_weights, /*non_blocking=*/false);
+  torch::from_blob(min_weight.data(), {(long)(num_crit_mins * sizeof(GPUPathRef))}, torch::kUInt8)
+      .copy_(d_min_weights, /*non_blocking=*/false);
 
-  size_t req_max_dag = max_dag_sz + N2;
-  std::vector<GPUDAGNode> cpu_max_dag(req_max_dag);
+  size_t required_max_dag = max_dag_sz + num_crit_maxes + N2;
+  std::vector<GPUDAGNode> max_dag(required_max_dag);
   if (max_dag_sz > 0) {
-    torch::Tensor cpu_max_dag_tensor = d_max_dag.cpu();
-    std::memcpy(cpu_max_dag.data(), cpu_max_dag_tensor.data_ptr(), max_dag_sz * sizeof(GPUDAGNode));
+    torch::from_blob(max_dag.data(), {(long)(max_dag_sz * sizeof(GPUDAGNode))}, torch::kUInt8)
+        .copy_(d_max_dag.slice(0, 0, max_dag_sz * sizeof(GPUDAGNode)), /*non_blocking=*/false);
   }
 
-  size_t req_min_dag = min_dag_sz + N2;
-  std::vector<GPUDAGNode> cpu_min_dag(req_min_dag);
+  size_t required_min_dag = min_dag_sz + num_crit_mins + N2;
+  std::vector<GPUDAGNode> min_dag(required_min_dag);
   if (min_dag_sz > 0) {
-    torch::Tensor cpu_min_dag_tensor = d_min_dag.cpu();
-    std::memcpy(cpu_min_dag.data(), cpu_min_dag_tensor.data_ptr(), min_dag_sz * sizeof(GPUDAGNode));
+    torch::from_blob(min_dag.data(), {(long)(min_dag_sz * sizeof(GPUDAGNode))}, torch::kUInt8)
+        .copy_(d_min_dag.slice(0, 0, min_dag_sz * sizeof(GPUDAGNode)), /*non_blocking=*/false);
+  }
+
+  // flatten the union find tree
+  {
+    RECORD_FUNCTION("Final_Path_Compression_Sweep", {});
+
+    auto MergePathsCPU = [&](GPUPathRef p1, GPUPathRef p2, GPUDAGNode* dag, int& dag_sz,
+                             const int* base_lens) -> GPUPathRef {
+      if (p1.id == -1) return p2;
+      if (p2.id == -1) return p1;
+      int len1 = (p1.id < N2) ? base_lens[p1.id] : dag[p1.id - N2].total_len;
+      int len2 = (p2.id < N2) ? base_lens[p2.id] : dag[p2.id - N2].total_len;
+      int new_id = dag_sz + N2;
+      dag[dag_sz++] = {p1.id, p2.id, p1.fwd, p2.fwd, len1 + len2, 0};  // 0 is the _padding
+      return {new_id, 1};
+    };
+
+    auto FindCPU = [&](auto& self, int i, int* parent, GPUPathRef* weight, GPUDAGNode* dag, int& dag_sz,
+                       const int* blen) -> int {
+      if (i == -1) return -1;
+      if (parent[i] == i) return i;
+      int p = parent[i];
+      int root = self(self, p, parent, weight, dag, dag_sz, blen);
+      if (p != -1 && weight[p].id != -1) {
+        weight[i] = MergePathsCPU(weight[i], weight[p], dag, dag_sz, blen);
+      }
+      parent[i] = root;
+      return root;
+    };
+
+    tbb::parallel_invoke(
+        [&]() {
+          for (int i = 0; i < num_crit_maxes; ++i) {
+            FindCPU(FindCPU, i, max_parent.data(), max_weight.data(), max_dag.data(), max_dag_sz, base_max_len.data());
+          }
+        },
+        [&]() {
+          for (int i = 0; i < num_crit_mins; ++i) {
+            FindCPU(FindCPU, i, min_parent.data(), min_weight.data(), min_dag.data(), min_dag_sz, base_min_len.data());
+          }
+        });
   }
 
   cpu::assemble_simplified_geometry<GPUDAGNode, GPUPathRef>(
       ws, max_alive, min_alive, init_t_max, init_t_min, base_max_len, base_min_len, base_max_offset, base_min_offset,
-      max_parent, min_parent, max_weight, min_weight, cpu_max_dag, max_dag_sz, cpu_min_dag, min_dag_sz);
+      max_parent, min_parent, max_weight, min_weight, max_dag, max_dag_sz, min_dag, min_dag_sz);
 }
 }  // namespace gpu

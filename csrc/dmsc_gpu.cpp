@@ -47,7 +47,7 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
 
   cpu::compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs);
 
-  if (trace_arcs) cpu::simplify_arcs_geometry(ws);
+  if (trace_arcs) gpu::simplify_arcs_geometry(ws);
 
   if (trace_manifolds) gpu::compute_cell_groups<IS_DUAL>(ws);
 

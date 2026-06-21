@@ -37,9 +37,27 @@ __device__ inline GPUPathRef merge_paths_cuda(GPUPathRef p1, GPUPathRef p2, GPUD
   return {new_id, 1};
 }
 
+__device__ inline GPUPathRef read_only_find_with_weight(int i, const int* parent, const GPUPathRef* weights,
+                                                        GPUDAGNode* dag, int* dag_sz, const int* base_lens, int N2,
+                                                        int stop_node) {
+  if (i == -1) return GPUPathRef{-1, 1};
+
+  GPUPathRef acc = weights[i];
+  int curr = parent[i];
+
+  while (curr != -1 && parent[curr] != curr && curr != stop_node) {
+    if (weights[curr].id != -1) {
+      acc = merge_paths_cuda(acc, weights[curr], dag, dag_sz, base_lens, N2);
+    }
+    curr = parent[curr];
+  }
+  return acc;
+}
+
 __global__ void evaluate_cancellations_kernel(const int* cancels, const int* init_t, const int* parent_ptrs,
                                               const uint8_t* alive, const uint8_t* pending, int* ready_count,
-                                              int* ready_list, int num_cancels, int num_extrema) {
+                                              int* ready_list, int* ready_R0, int* ready_R1, int num_cancels,
+                                              int num_extrema) {
   // Grid-stride loop
   for (int id = blockIdx.x * blockDim.x + threadIdx.x; id < num_cancels; id += blockDim.x * gridDim.x) {
     if (pending[id] == 0) continue;
@@ -58,14 +76,16 @@ __global__ void evaluate_cancellations_kernel(const int* cancels, const int* ini
     if ((R0 == dead && R0 != R1) || (R1 == dead && R0 != R1)) {
       int write_idx = atomicAdd(ready_count, 1);
       ready_list[write_idx] = id;
+      ready_R0[write_idx] = R0;
+      ready_R1[write_idx] = R1;
     }
   }
 }
 
-__global__ void contract_cancellations_kernel(const int* ready_list, const int* cancels, const int* init_t,
-                                              const int* base_lens, int* parent_ptrs, GPUPathRef* weights,
-                                              GPUDAGNode* dag, int* dag_sz, uint8_t* alive, uint8_t* pending,
-                                              int num_ready, int N2) {
+__global__ void contract_cancellations_kernel(const int* ready_list, const int* ready_R0, const int* ready_R1,
+                                              const int* cancels, const int* init_t, const int* base_lens,
+                                              int* parent_ptrs, GPUPathRef* weights, GPUDAGNode* dag, int* dag_sz,
+                                              uint8_t* alive, uint8_t* pending, int num_ready, int N2) {
   for (int id = blockIdx.x * blockDim.x + threadIdx.x; id < num_ready; id += blockDim.x * gridDim.x) {
     int cancel_idx = ready_list[id];
     int s = cancels[cancel_idx * 2];
@@ -74,24 +94,31 @@ __global__ void contract_cancellations_kernel(const int* ready_list, const int* 
     int T0 = init_t[2 * s];
     int T1 = init_t[2 * s + 1];
 
-    int R0 = read_only_find(T0, parent_ptrs);
-    int R1 = read_only_find(T1, parent_ptrs);
-
-    GPUPathRef wT0 = (T0 == -1) ? GPUPathRef{-1, 1} : weights[T0];
-    GPUPathRef wT1 = (T1 == -1) ? GPUPathRef{-1, 1} : weights[T1];
+    int R0 = ready_R0[id];
+    int R1 = ready_R1[id];
 
     if (R0 == dead && R0 != R1) {
-      parent_ptrs[R0] = R1;
+      GPUPathRef wT0 = (T0 == -1 || T0 == R0) ? GPUPathRef{-1, 1} : weights[T0];
+      GPUPathRef wT1 = (T1 == -1 || T1 == R1) ? GPUPathRef{-1, 1} : weights[T1];
+
       GPUPathRef Full0 = merge_paths_cuda({2 * s, 1}, wT0, dag, dag_sz, base_lens, N2);
       GPUPathRef Full1 = merge_paths_cuda({2 * s + 1, 1}, wT1, dag, dag_sz, base_lens, N2);
       weights[R0] = merge_paths_cuda({Full0.id, Full0.fwd == 0 ? 1 : 0}, Full1, dag, dag_sz, base_lens, N2);
+
+      parent_ptrs[R0] = R1;
+
       alive[s] = 0;
       pending[cancel_idx] = 0;
     } else if (R1 == dead && R0 != R1) {
-      parent_ptrs[R1] = R0;
+      GPUPathRef wT0 = (T0 == -1 || T0 == R0) ? GPUPathRef{-1, 1} : weights[T0];
+      GPUPathRef wT1 = (T1 == -1 || T1 == R1) ? GPUPathRef{-1, 1} : weights[T1];
+
       GPUPathRef Full0 = merge_paths_cuda({2 * s, 1}, wT0, dag, dag_sz, base_lens, N2);
       GPUPathRef Full1 = merge_paths_cuda({2 * s + 1, 1}, wT1, dag, dag_sz, base_lens, N2);
       weights[R1] = merge_paths_cuda({Full1.id, Full1.fwd == 0 ? 1 : 0}, Full0, dag, dag_sz, base_lens, N2);
+
+      parent_ptrs[R1] = R0;
+
       alive[s] = 0;
       pending[cancel_idx] = 0;
     }
@@ -136,14 +163,23 @@ void launch_simplify_arcs_cuda(torch::Tensor d_cancels, torch::Tensor d_init_t, 
   // Allocate temporary scalar buffers for cross-bridge polling
   int* d_ready_count;
   int* d_ready_list;
+  int* d_ready_R0;
+  int* d_ready_R1;
   int* d_mtl_dag_sz;
   int* d_changed;
   cudaMallocAsync(&d_ready_count, sizeof(int), stream);
   cudaMallocAsync(&d_ready_list, num_cancels * sizeof(int), stream);
+  cudaMallocAsync(&d_ready_R0, num_cancels * sizeof(int), stream);
+  cudaMallocAsync(&d_ready_R1, num_cancels * sizeof(int), stream);
   cudaMallocAsync(&d_mtl_dag_sz, sizeof(int), stream);
   cudaMallocAsync(&d_changed, sizeof(int), stream);
 
   cudaMemcpyAsync(d_mtl_dag_sz, host_dag_sz, sizeof(int), cudaMemcpyHostToDevice, stream);
+
+  // Allocate alt buffers for pointer jumping once outside the loop
+  auto opts = torch::TensorOptions().dtype(torch::kInt32).device(d_parent_ptrs.device());
+  torch::Tensor d_parent_alt = torch::empty_like(d_parent_ptrs);
+  torch::Tensor d_weights_alt = torch::empty_like(d_weights);
 
   // Iterative Contraction Loop
   int iteration = 0;
@@ -153,7 +189,7 @@ void launch_simplify_arcs_cuda(torch::Tensor d_cancels, torch::Tensor d_init_t, 
     int blocks_eval = (num_cancels + threads - 1) / threads;
     evaluate_cancellations_kernel<<<blocks_eval, threads, 0, stream>>>(
         d_cancels.data_ptr<int>(), d_init_t.data_ptr<int>(), d_parent_ptrs.data_ptr<int>(), d_alive.data_ptr<uint8_t>(),
-        d_pending.data_ptr<uint8_t>(), d_ready_count, d_ready_list, num_cancels, num_extrema);
+        d_pending.data_ptr<uint8_t>(), d_ready_count, d_ready_list, d_ready_R0, d_ready_R1, num_cancels, num_extrema);
 
     // Sync to read back the ready count
     int h_ready = 0;
@@ -164,48 +200,46 @@ void launch_simplify_arcs_cuda(torch::Tensor d_cancels, torch::Tensor d_init_t, 
 
     int blocks_contract = (h_ready + threads - 1) / threads;
     contract_cancellations_kernel<<<blocks_contract, threads, 0, stream>>>(
-        d_ready_list, d_cancels.data_ptr<int>(), d_init_t.data_ptr<int>(), d_base_lens.data_ptr<int>(),
-        d_parent_ptrs.data_ptr<int>(), (GPUPathRef*)d_weights.data_ptr(), (GPUDAGNode*)d_dag.data_ptr(), d_mtl_dag_sz,
-        d_alive.data_ptr<uint8_t>(), d_pending.data_ptr<uint8_t>(), h_ready, N2);
+        d_ready_list, d_ready_R0, d_ready_R1, d_cancels.data_ptr<int>(), d_init_t.data_ptr<int>(),
+        d_base_lens.data_ptr<int>(), d_parent_ptrs.data_ptr<int>(), (GPUPathRef*)d_weights.data_ptr(),
+        (GPUDAGNode*)d_dag.data_ptr(), d_mtl_dag_sz, d_alive.data_ptr<uint8_t>(), d_pending.data_ptr<uint8_t>(),
+        h_ready, N2);
+
+
+    bool use_alt = false;
+    int pass = 0;
+
+    int blocks_comp = (num_extrema + threads - 1) / threads;
+    while (pass < 32) {
+      cudaMemsetAsync(d_changed, 0, sizeof(int), stream);
+
+      int* p_in = use_alt ? d_parent_alt.data_ptr<int>() : d_parent_ptrs.data_ptr<int>();
+      int* p_out = use_alt ? d_parent_ptrs.data_ptr<int>() : d_parent_alt.data_ptr<int>();
+      GPUPathRef* w_in = use_alt ? (GPUPathRef*)d_weights_alt.data_ptr() : (GPUPathRef*)d_weights.data_ptr();
+      GPUPathRef* w_out = use_alt ? (GPUPathRef*)d_weights.data_ptr() : (GPUPathRef*)d_weights_alt.data_ptr();
+
+      compress_paths_step_kernel<<<blocks_comp, threads, 0, stream>>>(
+          p_in, w_in, p_out, w_out, (GPUDAGNode*)d_dag.data_ptr(), d_mtl_dag_sz, d_base_lens.data_ptr<int>(), d_changed,
+          num_extrema, N2);
+
+      int h_changed = 0;
+      cudaMemcpyAsync(&h_changed, d_changed, sizeof(int), cudaMemcpyDeviceToHost, stream);
+      cudaStreamSynchronize(stream);
+
+      use_alt = !use_alt;
+      pass++;
+
+      if (h_changed == 0) break;
+    }
+
+    // If final data is in alt buffers, copy back to primary PyTorch tensors
+    if (use_alt) {
+      d_parent_ptrs.copy_(d_parent_alt, /*non_blocking=*/true);
+      d_weights.copy_(d_weights_alt, /*non_blocking=*/true);
+      cudaStreamSynchronize(stream);
+    }
+
     iteration++;
-  }
-
-  // Parallel Pointer Jumping (Log L)
-  auto opts = torch::TensorOptions().dtype(torch::kInt32).device(d_parent_ptrs.device());
-  torch::Tensor d_parent_alt = torch::empty_like(d_parent_ptrs);
-  torch::Tensor d_weights_alt = torch::empty_like(d_weights);
-
-  bool use_alt = false;
-  int pass = 0;
-
-  int blocks_comp = (num_extrema + threads - 1) / threads;
-  while (pass < 32) {
-    cudaMemsetAsync(d_changed, 0, sizeof(int), stream);
-
-    int* p_in = use_alt ? d_parent_alt.data_ptr<int>() : d_parent_ptrs.data_ptr<int>();
-    int* p_out = use_alt ? d_parent_ptrs.data_ptr<int>() : d_parent_alt.data_ptr<int>();
-    GPUPathRef* w_in = use_alt ? (GPUPathRef*)d_weights_alt.data_ptr() : (GPUPathRef*)d_weights.data_ptr();
-    GPUPathRef* w_out = use_alt ? (GPUPathRef*)d_weights.data_ptr() : (GPUPathRef*)d_weights_alt.data_ptr();
-
-    compress_paths_step_kernel<<<blocks_comp, threads, 0, stream>>>(
-        p_in, w_in, p_out, w_out, (GPUDAGNode*)d_dag.data_ptr(), d_mtl_dag_sz, d_base_lens.data_ptr<int>(), d_changed,
-        num_extrema, N2);
-
-    int h_changed = 0;
-    cudaMemcpyAsync(&h_changed, d_changed, sizeof(int), cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
-
-    use_alt = !use_alt;
-    pass++;
-
-    if (h_changed == 0) break;
-  }
-
-  // If final data is in alt buffers, copy back to primary PyTorch tensors
-  if (use_alt) {
-    d_parent_ptrs.copy_(d_parent_alt, /*non_blocking=*/true);
-    d_weights.copy_(d_weights_alt, /*non_blocking=*/true);
-    cudaStreamSynchronize(stream);
   }
 
   // Pull final DAG size
@@ -215,6 +249,8 @@ void launch_simplify_arcs_cuda(torch::Tensor d_cancels, torch::Tensor d_init_t, 
   // Cleanup local allocations
   cudaFree(d_ready_count);
   cudaFree(d_ready_list);
+  cudaFree(d_ready_R0);
+  cudaFree(d_ready_R1);
   cudaFree(d_mtl_dag_sz);
   cudaFree(d_changed);
 }
