@@ -62,11 +62,12 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
 
   using fwd_type = decltype(RefType::fwd);
 
-  auto MergePaths = [&](RefType p1, RefType p2, NodeType* dag, int& dag_sz, const int* base_lens) -> RefType {
+  auto MergePaths = [&](RefType p1, RefType p2, NodeType* dag, int& dag_sz, const int* base_lens,
+                        size_t max_allowed_dag_sz) -> RefType {
     if (p1.id == -1) return p2;
     if (p2.id == -1) return p1;
 
-    TORCH_CHECK((size_t)dag_sz < max_dag.size(),
+    TORCH_CHECK((size_t)dag_sz < max_allowed_dag_sz,
                 "The cancellation tree is too deep to merge path geometries."
                 "Please increase MAX_DAG_ALLOC_PER_PAIR in the C++ backend. ");
 
@@ -91,12 +92,13 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
         // Maxima Resolution & Prefix Sum
         [&]() {
           for (int i = 0; i < num_saddles; ++i) {
-            if (!(max_alive[i] && min_alive[i])) continue;
+            int original_s_id = ws.gradient_data.cp.saddles[i];
+            if (ws.hlp.fast_crit_map[original_s_id] == -1) continue;
 
             int TM0 = init_t_max[2 * i];
             if (TM0 != -1) {
-              final_max_path[2 * i] =
-                  MergePaths({2 * i, (fwd_type)1}, p_max_weight[TM0], p_max_dag, max_dag_sz, p_base_max_len);
+              final_max_path[2 * i] = MergePaths({2 * i, (fwd_type)1}, p_max_weight[TM0], p_max_dag, max_dag_sz,
+                                                 p_base_max_len, max_dag.size());
               final_max_len[2 * i] = (final_max_path[2 * i].id < N2)
                                          ? p_base_max_len[final_max_path[2 * i].id]
                                          : p_max_dag[final_max_path[2 * i].id - N2].total_len;
@@ -104,8 +106,8 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
 
             int TM1 = init_t_max[2 * i + 1];
             if (TM1 != -1) {
-              final_max_path[2 * i + 1] =
-                  MergePaths({2 * i + 1, (fwd_type)1}, p_max_weight[TM1], p_max_dag, max_dag_sz, p_base_max_len);
+              final_max_path[2 * i + 1] = MergePaths({2 * i + 1, (fwd_type)1}, p_max_weight[TM1], p_max_dag, max_dag_sz,
+                                                     p_base_max_len, max_dag.size());
               final_max_len[2 * i + 1] = (final_max_path[2 * i + 1].id < N2)
                                              ? p_base_max_len[final_max_path[2 * i + 1].id]
                                              : p_max_dag[final_max_path[2 * i + 1].id - N2].total_len;
@@ -116,12 +118,13 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
         // Minima Resolution & Prefix Sum
         [&]() {
           for (int i = 0; i < num_saddles; ++i) {
-            if (!(max_alive[i] && min_alive[i])) continue;
+            int original_s_id = ws.gradient_data.cp.saddles[i];
+            if (ws.hlp.fast_crit_map[original_s_id] == -1) continue;
 
             int TN0 = init_t_min[2 * i];
             if (TN0 != -1) {
-              final_min_path[2 * i] =
-                  MergePaths({2 * i, (fwd_type)1}, p_min_weight[TN0], p_min_dag, min_dag_sz, p_base_min_len);
+              final_min_path[2 * i] = MergePaths({2 * i, (fwd_type)1}, p_min_weight[TN0], p_min_dag, min_dag_sz,
+                                                 p_base_min_len, min_dag.size());
               final_min_len[2 * i] = (final_min_path[2 * i].id < N2)
                                          ? p_base_min_len[final_min_path[2 * i].id]
                                          : p_min_dag[final_min_path[2 * i].id - N2].total_len;
@@ -129,8 +132,8 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
 
             int TN1 = init_t_min[2 * i + 1];
             if (TN1 != -1) {
-              final_min_path[2 * i + 1] =
-                  MergePaths({2 * i + 1, (fwd_type)1}, p_min_weight[TN1], p_min_dag, min_dag_sz, p_base_min_len);
+              final_min_path[2 * i + 1] = MergePaths({2 * i + 1, (fwd_type)1}, p_min_weight[TN1], p_min_dag, min_dag_sz,
+                                                     p_base_min_len, min_dag.size());
               final_min_len[2 * i + 1] = (final_min_path[2 * i + 1].id < N2)
                                              ? p_base_min_len[final_min_path[2 * i + 1].id]
                                              : p_min_dag[final_min_path[2 * i + 1].id - N2].total_len;
@@ -141,8 +144,13 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
   }
 
   auto cpu_int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
-  // torch::Tensor new_flat_max = torch::empty({(long)final_max_offset.back()}, cpu_int_opts);
-  // torch::Tensor new_flat_min = torch::empty({(long)final_min_offset.back()}, cpu_int_opts);
+
+  if (final_max_offset.back() < 0) {
+    printf("ERROR: final_max_offset.back() is %d\n", final_max_offset.back());
+  }
+  if (final_min_offset.back() < 0) {
+    printf("ERROR: final_min_offset.back() is %d\n", final_min_offset.back());
+  }
 
   auto new_flat_max_geom = ws.hlp.temp_flat_max.request({(long)final_max_offset.back()}, cpu_int_opts);
   auto new_flat_min_geom = ws.hlp.temp_flat_min.request({(long)final_min_offset.back()}, cpu_int_opts);
@@ -256,7 +264,7 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
 }
 
 template <typename Workspace>
-void simplify_arcs_geometry(Workspace& ws) {
+void simplify_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_arcs) {
   RECORD_FUNCTION("simplify_arcs_geometry_flat", {});
   auto& min_cancellations = ws.p_data.min_cancellations;
   auto& max_cancellations = ws.p_data.max_cancellations;
@@ -293,20 +301,23 @@ void simplify_arcs_geometry(Workspace& ws) {
     at::parallel_for(0, num_saddles, 1024, [&](int64_t start, int64_t end) {
       for (int64_t i = start; i < end; ++i) {
         int idx = static_cast<int>(i);
-        init_t_max[2 * idx] = sn.nodes[idx].max_arcs[0].target;
-        init_t_max[2 * idx + 1] = sn.nodes[idx].max_arcs[1].target;
-        init_t_min[2 * idx] = sn.nodes[idx].min_arcs[0].target;
-        init_t_min[2 * idx + 1] = sn.nodes[idx].min_arcs[1].target;
+        if (trace_max_arcs) {
+          init_t_max[2 * idx] = sn.nodes[idx].max_arcs[0].target;
+          init_t_max[2 * idx + 1] = sn.nodes[idx].max_arcs[1].target;
+          base_max_len[2 * idx] = sn.nodes[idx].max_arcs[0].length;
+          base_max_len[2 * idx + 1] = sn.nodes[idx].max_arcs[1].length;
+          base_max_offset[2 * idx] = sn.nodes[idx].max_arcs[0].offset;
+          base_max_offset[2 * idx + 1] = sn.nodes[idx].max_arcs[1].offset;
+        }
 
-        base_max_len[2 * idx] = sn.nodes[idx].max_arcs[0].length;
-        base_max_len[2 * idx + 1] = sn.nodes[idx].max_arcs[1].length;
-        base_max_offset[2 * idx] = sn.nodes[idx].max_arcs[0].offset;
-        base_max_offset[2 * idx + 1] = sn.nodes[idx].max_arcs[1].offset;
-
-        base_min_len[2 * idx] = sn.nodes[idx].min_arcs[0].length;
-        base_min_len[2 * idx + 1] = sn.nodes[idx].min_arcs[1].length;
-        base_min_offset[2 * idx] = sn.nodes[idx].min_arcs[0].offset;
-        base_min_offset[2 * idx + 1] = sn.nodes[idx].min_arcs[1].offset;
+        if (trace_min_arcs) {
+          init_t_min[2 * idx] = sn.nodes[idx].min_arcs[0].target;
+          init_t_min[2 * idx + 1] = sn.nodes[idx].min_arcs[1].target;
+          base_min_len[2 * idx] = sn.nodes[idx].min_arcs[0].length;
+          base_min_len[2 * idx + 1] = sn.nodes[idx].min_arcs[1].length;
+          base_min_offset[2 * idx] = sn.nodes[idx].min_arcs[0].offset;
+          base_min_offset[2 * idx + 1] = sn.nodes[idx].min_arcs[1].offset;
+        }
       }
     });
   }
@@ -320,9 +331,14 @@ void simplify_arcs_geometry(Workspace& ws) {
   const int* p_base_max_len = base_max_len.data();
   const int* p_base_min_len = base_min_len.data();
 
-  auto MergePaths = [&](PathRef p1, PathRef p2, DAGNode* dag, int& dag_sz, const int* base_lens) -> PathRef {
+  auto MergePaths = [&](PathRef p1, PathRef p2, DAGNode* dag, int& dag_sz, const int* base_lens,
+                        size_t max_allowed_dag_sz) -> PathRef {
     if (p1.id == -1) return p2;
     if (p2.id == -1) return p1;
+
+    TORCH_CHECK((size_t)dag_sz < max_allowed_dag_sz,
+                "The cancellation tree is too deep to merge path geometries."
+                "Please increase MAX_DAG_ALLOC_PER_PAIR in the C++ backend. ");
 
     int len1 = (p1.id < N2) ? base_lens[p1.id] : dag[p1.id - N2].total_len;
     int len2 = (p2.id < N2) ? base_lens[p2.id] : dag[p2.id - N2].total_len;
@@ -331,15 +347,16 @@ void simplify_arcs_geometry(Workspace& ws) {
     return {new_id, true};
   };
 
-  auto Find = [&](auto& self, int i, int* parent, PathRef* weight, DAGNode* dag, int& dag_sz, const int* blen) -> int {
+  auto Find = [&](auto& self, int i, int* parent, PathRef* weight, DAGNode* dag, int& dag_sz, const int* blen,
+                  size_t max_allowed_dag_sz) -> int {
     if (i == -1) return -1;
     if (parent[i] == i) return i;
 
     int p = parent[i];
-    int root = self(self, p, parent, weight, dag, dag_sz, blen);
+    int root = self(self, p, parent, weight, dag, dag_sz, blen, max_allowed_dag_sz);
 
     if (p != -1 && weight[p].id != -1) {
-      weight[i] = MergePaths(weight[i], weight[p], dag, dag_sz, blen);
+      weight[i] = MergePaths(weight[i], weight[p], dag, dag_sz, blen, max_allowed_dag_sz);
     }
     parent[i] = root;
     return root;
@@ -351,6 +368,7 @@ void simplify_arcs_geometry(Workspace& ws) {
     tbb::parallel_invoke(
         // MAXIMA
         [&]() {
+          if (!trace_max_arcs) return;
           tbb::parallel_sort(max_cancellations.begin(), max_cancellations.end());
 
           for (const auto& cancel : max_cancellations) {
@@ -361,25 +379,25 @@ void simplify_arcs_geometry(Workspace& ws) {
             if (dead < 0 || dead >= num_crit_maxes) continue;
 
             int T0 = init_t_max[2 * s], T1 = init_t_max[2 * s + 1];
-            int R0 = Find(Find, T0, p_max_parent, p_max_weight, p_max_dag, max_dag_sz, p_base_max_len);
-            int R1 = Find(Find, T1, p_max_parent, p_max_weight, p_max_dag, max_dag_sz, p_base_max_len);
+            int R0 = Find(Find, T0, p_max_parent, p_max_weight, p_max_dag, max_dag_sz, p_base_max_len, max_dag.size());
+            int R1 = Find(Find, T1, p_max_parent, p_max_weight, p_max_dag, max_dag_sz, p_base_max_len, max_dag.size());
 
             PathRef wT0 = (T0 == -1) ? PathRef{-1, true} : p_max_weight[T0];
             PathRef wT1 = (T1 == -1) ? PathRef{-1, true} : p_max_weight[T1];
 
-            PathRef Full0 = MergePaths({2 * s, true}, wT0, p_max_dag, max_dag_sz, p_base_max_len);
-            PathRef Full1 = MergePaths({2 * s + 1, true}, wT1, p_max_dag, max_dag_sz, p_base_max_len);
+            PathRef Full0 = MergePaths({2 * s, true}, wT0, p_max_dag, max_dag_sz, p_base_max_len, max_dag.size());
+            PathRef Full1 = MergePaths({2 * s + 1, true}, wT1, p_max_dag, max_dag_sz, p_base_max_len, max_dag.size());
 
             bool merged = false;
             if (R0 == dead && R0 != R1) {
               p_max_parent[R0] = R1;
-              p_max_weight[R0] =
-                  MergePaths({Full0.id, (bool)(!Full0.fwd)}, Full1, p_max_dag, max_dag_sz, p_base_max_len);
+              p_max_weight[R0] = MergePaths({Full0.id, (bool)(!Full0.fwd)}, Full1, p_max_dag, max_dag_sz,
+                                            p_base_max_len, max_dag.size());
               merged = true;
             } else if (R1 == dead && R0 != R1) {
               p_max_parent[R1] = R0;
-              p_max_weight[R1] =
-                  MergePaths({Full1.id, (bool)(!Full1.fwd)}, Full0, p_max_dag, max_dag_sz, p_base_max_len);
+              p_max_weight[R1] = MergePaths({Full1.id, (bool)(!Full1.fwd)}, Full0, p_max_dag, max_dag_sz,
+                                            p_base_max_len, max_dag.size());
               merged = true;
             }
 
@@ -387,12 +405,13 @@ void simplify_arcs_geometry(Workspace& ws) {
           }
 
           for (int i = 0; i < num_crit_maxes; ++i) {
-            Find(Find, i, p_max_parent, p_max_weight, p_max_dag, max_dag_sz, p_base_max_len);
+            Find(Find, i, p_max_parent, p_max_weight, p_max_dag, max_dag_sz, p_base_max_len, max_dag.size());
           }
         },
 
         // MINIMA
         [&]() {
+          if (!trace_min_arcs) return;
           tbb::parallel_sort(min_cancellations.begin(), min_cancellations.end());
 
           for (const auto& cancel : min_cancellations) {
@@ -403,25 +422,25 @@ void simplify_arcs_geometry(Workspace& ws) {
             if (dead < 0 || dead >= num_crit_mins) continue;
 
             int T0 = init_t_min[2 * s], T1 = init_t_min[2 * s + 1];
-            int R0 = Find(Find, T0, p_min_parent, p_min_weight, p_min_dag, min_dag_sz, p_base_min_len);
-            int R1 = Find(Find, T1, p_min_parent, p_min_weight, p_min_dag, min_dag_sz, p_base_min_len);
+            int R0 = Find(Find, T0, p_min_parent, p_min_weight, p_min_dag, min_dag_sz, p_base_min_len, min_dag.size());
+            int R1 = Find(Find, T1, p_min_parent, p_min_weight, p_min_dag, min_dag_sz, p_base_min_len, min_dag.size());
 
             PathRef wT0 = (T0 == -1) ? PathRef{-1, true} : p_min_weight[T0];
             PathRef wT1 = (T1 == -1) ? PathRef{-1, true} : p_min_weight[T1];
 
-            PathRef Full0 = MergePaths({2 * s, true}, wT0, p_min_dag, min_dag_sz, p_base_min_len);
-            PathRef Full1 = MergePaths({2 * s + 1, true}, wT1, p_min_dag, min_dag_sz, p_base_min_len);
+            PathRef Full0 = MergePaths({2 * s, true}, wT0, p_min_dag, min_dag_sz, p_base_min_len, min_dag.size());
+            PathRef Full1 = MergePaths({2 * s + 1, true}, wT1, p_min_dag, min_dag_sz, p_base_min_len, min_dag.size());
 
             bool merged = false;
             if (R0 == dead && R0 != R1) {
               p_min_parent[R0] = R1;
-              p_min_weight[R0] =
-                  MergePaths({Full0.id, (bool)(!Full0.fwd)}, Full1, p_min_dag, min_dag_sz, p_base_min_len);
+              p_min_weight[R0] = MergePaths({Full0.id, (bool)(!Full0.fwd)}, Full1, p_min_dag, min_dag_sz,
+                                            p_base_min_len, min_dag.size());
               merged = true;
             } else if (R1 == dead && R0 != R1) {
               p_min_parent[R1] = R0;
-              p_min_weight[R1] =
-                  MergePaths({Full1.id, (bool)(!Full1.fwd)}, Full0, p_min_dag, min_dag_sz, p_base_min_len);
+              p_min_weight[R1] = MergePaths({Full1.id, (bool)(!Full1.fwd)}, Full0, p_min_dag, min_dag_sz,
+                                            p_base_min_len, min_dag.size());
               merged = true;
             }
 
@@ -429,7 +448,7 @@ void simplify_arcs_geometry(Workspace& ws) {
           }
 
           for (int i = 0; i < num_crit_mins; ++i) {
-            Find(Find, i, p_min_parent, p_min_weight, p_min_dag, min_dag_sz, p_base_min_len);
+            Find(Find, i, p_min_parent, p_min_weight, p_min_dag, min_dag_sz, p_base_min_len, min_dag.size());
           }
         });
   }

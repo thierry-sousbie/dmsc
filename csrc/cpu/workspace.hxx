@@ -100,7 +100,8 @@ struct Workspace {
   }
 
   template <bool IS_DUAL = false>
-  DMSComplex complex(bool return_gradient, bool trace_arcs) {
+  DMSComplex complex(bool return_gradient, bool trace_max_arcs, bool trace_min_arcs, bool trace_face_groups,
+                     bool trace_vertex_groups) {
     RECORD_FUNCTION("Workspace::complex", {});
 
     auto opts_i = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
@@ -234,7 +235,7 @@ struct Workspace {
         },
         [&] {
           // Gather manifold geometries (ridges/valleys) if requested
-          if (trace_arcs) {
+          if (trace_max_arcs || trace_min_arcs) {
             int num_ridge_faces = 0, num_ridge_vertices = 0;
             int num_arcs = 0;
 
@@ -243,8 +244,8 @@ struct Workspace {
               int s_idx = fast_crit_map[original_saddle_id];
               const auto& node = saddle_nodes.nodes[s_idx];
               if (!node.alive) continue;
-              num_ridge_faces += node.max_arcs[0].length + node.max_arcs[1].length;
-              num_ridge_vertices += node.min_arcs[0].length + node.min_arcs[1].length;
+              if (trace_max_arcs) num_ridge_faces += node.max_arcs[0].length + node.max_arcs[1].length;
+              if (trace_min_arcs) num_ridge_vertices += node.min_arcs[0].length + node.min_arcs[1].length;
               num_arcs++;
             }
 
@@ -278,23 +279,27 @@ struct Workspace {
               const auto& node = saddle_nodes.nodes[s_idx];
               if (!node.alive) continue;
 
-              for (int k = 0; k < 2; ++k) {
-                int len = node.max_arcs[k].length;
-                const int* start = flat_max_ptr + node.max_arcs[k].offset;
-                std::memcpy(out_ridge_faces + f_idx, start, len * sizeof(int));
-                f_idx += len;
-                if (k == 0) out_arc_faces_off[a_f_off_idx++] = f_idx;
+              if (trace_max_arcs) {
+                for (int k = 0; k < 2; ++k) {
+                  int len = node.max_arcs[k].length;
+                  const int* start = flat_max_ptr + node.max_arcs[k].offset;
+                  std::memcpy(out_ridge_faces + f_idx, start, len * sizeof(int));
+                  f_idx += len;
+                  if (k == 0) out_arc_faces_off[a_f_off_idx++] = f_idx;
+                }
+                out_ridge_faces_off[r_f_off_idx++] = f_idx;
               }
-              out_ridge_faces_off[r_f_off_idx++] = f_idx;
 
-              for (int k = 0; k < 2; ++k) {
-                int len = node.min_arcs[k].length;
-                const int* start = flat_min_ptr + node.min_arcs[k].offset;
-                std::memcpy(out_ridge_vertices + v_idx, start, len * sizeof(int));
-                v_idx += len;
-                if (k == 0) out_arc_vertices_off[a_v_off_idx++] = v_idx;
+              if (trace_min_arcs) {
+                for (int k = 0; k < 2; ++k) {
+                  int len = node.min_arcs[k].length;
+                  const int* start = flat_min_ptr + node.min_arcs[k].offset;
+                  std::memcpy(out_ridge_vertices + v_idx, start, len * sizeof(int));
+                  v_idx += len;
+                  if (k == 0) out_arc_vertices_off[a_v_off_idx++] = v_idx;
+                }
+                out_ridge_vertices_off[r_v_off_idx++] = v_idx;
               }
-              out_ridge_vertices_off[r_v_off_idx++] = v_idx;
             }
           }
         });
@@ -306,9 +311,9 @@ struct Workspace {
     result.shape.template accessor<int32_t, 1>()[1] = W;
 
     result.sad_pts = hlp.out_sad_pts.get().clone();
-    result.grad_indices = return_gradient
-                              ? hlp.out_grad.copy_from_cpu_ptr(gradient_data.paired_with.data(), {num_cells}, opts_i).clone()
-                              : torch::empty({0}, opts_i);
+    result.grad_indices =
+        return_gradient ? hlp.out_grad.copy_from_cpu_ptr(gradient_data.paired_with.data(), {num_cells}, opts_i).clone()
+                        : torch::empty({0}, opts_i);
 
     auto t_max = hlp.out_max_pts.get().slice(0, 0, max_count).clone();
     auto t_min = hlp.out_min_pts.get().slice(0, 0, min_count).clone();
@@ -319,13 +324,16 @@ struct Workspace {
     auto t_ppairs_max = hlp.out_ppairs_max.get().clone();
     auto t_ppairs_min = hlp.out_ppairs_min.get().clone();
 
-    auto t_ridge_faces = trace_arcs ? hlp.out_ridge_faces.get().clone() : torch::empty({0}, opts_i);
-    auto t_ridge_faces_off = trace_arcs ? hlp.out_ridge_faces_off.get().clone() : torch::empty({0}, opts_i);
-    auto t_arc_faces_off = trace_arcs ? hlp.out_arc_faces_off.get().clone() : torch::empty({0}, opts_i);
+    auto t_ridge_faces = trace_max_arcs ? hlp.out_ridge_faces.get().clone() : torch::empty({0}, opts_i);
+    auto t_ridge_faces_off = trace_max_arcs ? hlp.out_ridge_faces_off.get().clone() : torch::empty({0}, opts_i);
+    auto t_arc_faces_off = trace_max_arcs ? hlp.out_arc_faces_off.get().clone() : torch::empty({0}, opts_i);
 
-    auto t_ridge_vertices = trace_arcs ? hlp.out_ridge_vertices.get().clone() : torch::empty({0}, opts_i);
-    auto t_ridge_vertices_off = trace_arcs ? hlp.out_ridge_vertices_off.get().clone() : torch::empty({0}, opts_i);
-    auto t_arc_vertices_off = trace_arcs ? hlp.out_arc_vertices_off.get().clone() : torch::empty({0}, opts_i);
+    auto t_ridge_vertices = trace_min_arcs ? hlp.out_ridge_vertices.get().clone() : torch::empty({0}, opts_i);
+    auto t_ridge_vertices_off = trace_min_arcs ? hlp.out_ridge_vertices_off.get().clone() : torch::empty({0}, opts_i);
+    auto t_arc_vertices_off = trace_min_arcs ? hlp.out_arc_vertices_off.get().clone() : torch::empty({0}, opts_i);
+
+    auto t_face_groups = trace_face_groups ? cell_groups.face_groups.get().clone() : torch::empty({0, 0}, opts_i);
+    auto t_vertex_groups = trace_vertex_groups ? cell_groups.vertex_groups.get().clone() : torch::empty({0, 0}, opts_i);
 
     // Permute definitions of Maxima vs Minima depending on whether this is a Primal or Dual complex
     if (IS_DUAL) {
@@ -338,12 +346,12 @@ struct Workspace {
       result.ppairs_max = t_ppairs_min;
       result.ppairs_min = t_ppairs_max;
 
-      result.peaks = cell_groups.vertex_groups.get().clone();
+      result.peaks = t_vertex_groups;
       result.ridges = t_ridge_vertices;
       result.ridge_offsets = t_ridge_vertices_off;
       result.ridge_arc_offsets = t_arc_vertices_off;
 
-      result.basins = cell_groups.face_groups.get().clone();
+      result.basins = t_face_groups;
       result.valleys = t_ridge_faces;
       result.valley_offsets = t_ridge_faces_off;
       result.valley_arc_offsets = t_arc_faces_off;
@@ -358,12 +366,12 @@ struct Workspace {
       result.ppairs_max = t_ppairs_max;
       result.ppairs_min = t_ppairs_min;
 
-      result.peaks = cell_groups.face_groups.get().clone();
+      result.peaks = t_face_groups;
       result.ridges = t_ridge_faces;
       result.ridge_offsets = t_ridge_faces_off;
       result.ridge_arc_offsets = t_arc_faces_off;
 
-      result.basins = cell_groups.vertex_groups.get().clone();
+      result.basins = t_vertex_groups;
       result.valleys = t_ridge_vertices;
       result.valley_offsets = t_ridge_vertices_off;
       result.valley_arc_offsets = t_arc_vertices_off;

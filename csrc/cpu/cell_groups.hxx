@@ -94,7 +94,7 @@ inline int trace_vertices(int start_v, const int* paired_with, int H, int W, int
 }
 
 template <typename Workspace>
-void compute_cell_groups(Workspace& ws) {
+void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_vertex_groups) {
   RECORD_FUNCTION("cell_groups_cpu", {});
   int H = ws.H;
   int W = ws.W;
@@ -148,7 +148,7 @@ void compute_cell_groups(Workspace& ws) {
   const auto uf_max_parent = uf_max.parent;
   const auto uf_min_parent = uf_min.parent;
   // Compute Face Groups
-  {
+  if (trace_face_groups) {
     RECORD_FUNCTION("trace_faces_cpu", {});
     at::parallel_for(0, num_faces, 1024, [&](int64_t start, int64_t end) {
       for (int64_t i = start; i < end; ++i) {
@@ -188,7 +188,7 @@ void compute_cell_groups(Workspace& ws) {
   }
 
   // Compute Vertex Groups
-  {
+  if (trace_vertex_groups) {
     RECORD_FUNCTION("trace_vertices_cpu", {});
     at::parallel_for(0, num_vertices, 1024, [&](int64_t start, int64_t end) {
       for (int64_t i = start; i < end; ++i) {

@@ -19,6 +19,7 @@
 
 // Official Apple PyTorch <-> Metal Bridge
 static inline id<MTLBuffer> getMTLBufferStorage(const torch::Tensor& tensor) {
+  if (!tensor.defined()) return nil;
   return __builtin_bit_cast(id<MTLBuffer>, tensor.storage().data());
 }
 
@@ -477,7 +478,7 @@ void launch_trace_raw_arcs_geometry_metal(torch::Tensor d_paired_with, torch::Te
                                           torch::Tensor d_crit_saddles, torch::Tensor d_max_offsets,
                                           torch::Tensor d_min_offsets, torch::Tensor d_flat_max,
                                           torch::Tensor d_flat_min, torch::Tensor d_saddle_nodes, int H, int W, int Nx,
-                                          int num_saddles) {
+                                          int num_saddles, bool trace_max_arcs, bool trace_min_arcs) {
   @autoreleasepool {
     init_metal_context_if_needed();
 
@@ -503,12 +504,21 @@ void launch_trace_raw_arcs_geometry_metal(torch::Tensor d_paired_with, torch::Te
     [computeEncoder setBuffer:getMTLBufferStorage(d_min_offsets)
                        offset:d_min_offsets.storage_offset() * d_min_offsets.itemsize()
                       atIndex:4];
-    [computeEncoder setBuffer:getMTLBufferStorage(d_flat_max)
-                       offset:d_flat_max.storage_offset() * d_flat_max.itemsize()
-                      atIndex:5];
-    [computeEncoder setBuffer:getMTLBufferStorage(d_flat_min)
-                       offset:d_flat_min.storage_offset() * d_flat_min.itemsize()
-                      atIndex:6];
+    if (d_flat_max.defined()) {
+      [computeEncoder setBuffer:getMTLBufferStorage(d_flat_max)
+                         offset:d_flat_max.storage_offset() * d_flat_max.itemsize()
+                        atIndex:5];
+    } else {
+      [computeEncoder setBuffer:nil offset:0 atIndex:5];
+    }
+
+    if (d_flat_min.defined()) {
+      [computeEncoder setBuffer:getMTLBufferStorage(d_flat_min)
+                         offset:d_flat_min.storage_offset() * d_flat_min.itemsize()
+                        atIndex:6];
+    } else {
+      [computeEncoder setBuffer:nil offset:0 atIndex:6];
+    }
 
     // The FFI Struct Buffer (UInt8 tensor mapped directly to the SaddleNode struct)
     [computeEncoder setBuffer:getMTLBufferStorage(d_saddle_nodes)
@@ -521,6 +531,19 @@ void launch_trace_raw_arcs_geometry_metal(torch::Tensor d_paired_with, torch::Te
                                                          length:sizeof(Constants)
                                                         options:MTLResourceStorageModeShared];
     [computeEncoder setBuffer:params_buf offset:0 atIndex:8];
+
+    // Pass trace_max_arcs and trace_min_arcs
+    bool trace_max_arcs_b = trace_max_arcs;
+    id<MTLBuffer> trace_max_buf = [g_ctx.device newBufferWithBytes:&trace_max_arcs_b
+                                                            length:sizeof(bool)
+                                                           options:MTLResourceStorageModeShared];
+    [computeEncoder setBuffer:trace_max_buf offset:0 atIndex:9];
+
+    bool trace_min_arcs_b = trace_min_arcs;
+    id<MTLBuffer> trace_min_buf = [g_ctx.device newBufferWithBytes:&trace_min_arcs_b
+                                                            length:sizeof(bool)
+                                                           options:MTLResourceStorageModeShared];
+    [computeEncoder setBuffer:trace_min_buf offset:0 atIndex:10];
 
     // Simple 1D Grid Launch (1 thread per saddle)
     int threads = 256;
@@ -556,9 +579,9 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
     id<MTLBuffer> d_ready_list = [g_ctx.device newBufferWithLength:(num_cancels * sizeof(int))
                                                            options:MTLResourceStorageModePrivate];
     id<MTLBuffer> d_ready_R0 = [g_ctx.device newBufferWithLength:(num_cancels * sizeof(int))
-                                                           options:MTLResourceStorageModePrivate];
+                                                         options:MTLResourceStorageModePrivate];
     id<MTLBuffer> d_ready_R1 = [g_ctx.device newBufferWithLength:(num_cancels * sizeof(int))
-                                                           options:MTLResourceStorageModePrivate];
+                                                         options:MTLResourceStorageModePrivate];
 
     id<MTLBuffer> d_temp_weights = [g_ctx.device newBufferWithLength:(num_extrema * sizeof(uint64_t))
                                                              options:MTLResourceStorageModePrivate];

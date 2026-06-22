@@ -205,7 +205,6 @@ void launch_simplify_arcs_cuda(torch::Tensor d_cancels, torch::Tensor d_init_t, 
         (GPUDAGNode*)d_dag.data_ptr(), d_mtl_dag_sz, d_alive.data_ptr<uint8_t>(), d_pending.data_ptr<uint8_t>(),
         h_ready, N2);
 
-
     bool use_alt = false;
     int pass = 0;
 

@@ -132,6 +132,7 @@ setup(
     name="dmsc",
     version="0.1.0",
     packages=find_packages(),
+    py_modules=["dmsc"],
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExtension},
 )

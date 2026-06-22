@@ -159,25 +159,49 @@ class MSComplex:
         return iter(astuple(self))
 
 
-def extract_full_complex(img, persistence_threshold, block_size, return_gradient, is_dual, trace_arcs, trace_manifolds):
+def extract_full_complex(
+    img,
+    persistence_threshold,
+    return_gradient,
+    is_dual,
+    trace_max_arcs,
+    trace_min_arcs,
+    trace_max_groups,
+    trace_min_groups,
+):
     if img.device.type == "cuda" or img.device.type == "mps":
         return dmsc_gpu.extract_dmsc(
-            img, persistence_threshold, block_size, return_gradient, is_dual, trace_arcs, trace_manifolds
+            img,
+            persistence_threshold,
+            return_gradient,
+            is_dual,
+            trace_max_arcs,
+            trace_min_arcs,
+            trace_max_groups,
+            trace_min_groups,
         )
     else:
         return dmsc_cpu.extract_dmsc(
-            img, persistence_threshold, block_size, return_gradient, is_dual, trace_arcs, trace_manifolds
+            img,
+            persistence_threshold,
+            return_gradient,
+            is_dual,
+            trace_max_arcs,
+            trace_min_arcs,
+            trace_max_groups,
+            trace_min_groups,
         )
 
 
 def compute_dmsc(
     img,
     persistence_threshold,
-    block_size=32,
     return_gradient=True,
     is_dual=False,
-    trace_arcs=True,
-    trace_manifolds=True,
+    trace_valleys=True,
+    trace_ridges=True,
+    trace_peaks=True,
+    trace_basins=True,
     verbose=False,
 ) -> MSComplex | list[MSComplex]:
     """
@@ -188,10 +212,16 @@ def compute_dmsc(
         raise ValueError(f"Input tensor must be 2D [H, W] or 3D [B, H, W]. Got {img.dim()}D.")
 
     start_time = time.perf_counter()
-
     # The C++ unified API automatically handles both single and batched layouts
     output = extract_full_complex(
-        img, persistence_threshold, block_size, return_gradient, is_dual, trace_arcs, trace_manifolds
+        img,
+        persistence_threshold,
+        return_gradient,
+        is_dual,
+        trace_max_arcs=trace_ridges,
+        trace_min_arcs=trace_valleys,
+        trace_max_groups=trace_peaks,
+        trace_min_groups=trace_basins,
     )
 
     end_time = time.perf_counter()

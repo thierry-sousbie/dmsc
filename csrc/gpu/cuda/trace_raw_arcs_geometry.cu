@@ -106,7 +106,8 @@ __device__ inline TraceResult trace_geom_vertex(int start_v, const int* paired_w
 __global__ void trace_raw_arcs_geometry_kernel(const int* paired_with, const int* fast_crit_map,
                                                const int* crit_saddles, const int* max_offsets, const int* min_offsets,
                                                int* flat_max_geom, int* flat_min_geom, SaddleNode* saddle_nodes, int H,
-                                               int W, int Nx, int num_saddles) {
+                                               int W, int Nx, int num_saddles, bool trace_max_arcs,
+                                               bool trace_min_arcs) {
   int id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id >= num_saddles) return;
 
@@ -120,66 +121,70 @@ __global__ void trace_raw_arcs_geometry_kernel(const int* paired_with, const int
   }
 
   // MAX ARCS (Faces)
-  int f1 = -1, f2 = -1;
-  if (type == 1) {
-    if (is_valid_f(ey, ex, H, W)) f1 = cell_id(3, ey, ex, Nx);
-    if (is_valid_f(ey + 1, ex, H, W)) f2 = cell_id(3, ey + 1, ex, Nx);
-  } else {
-    if (is_valid_f(ey, ex, H, W)) f1 = cell_id(3, ey, ex, Nx);
-    if (is_valid_f(ey, ex + 1, H, W)) f2 = cell_id(3, ey, ex + 1, Nx);
-  }
+  if (trace_max_arcs) {
+    int f1 = -1, f2 = -1;
+    if (type == 1) {
+      if (is_valid_f(ey, ex, H, W)) f1 = cell_id(3, ey, ex, Nx);
+      if (is_valid_f(ey + 1, ex, H, W)) f2 = cell_id(3, ey + 1, ex, Nx);
+    } else {
+      if (is_valid_f(ey, ex, H, W)) f1 = cell_id(3, ey, ex, Nx);
+      if (is_valid_f(ey, ex + 1, H, W)) f2 = cell_id(3, ey, ex + 1, Nx);
+    }
 
-  int valid_max = 0;
-  if (f1 != -1) {
-    int arc_idx = valid_max++;
-    int base_off = max_offsets[2 * id + arc_idx];
-    TraceResult result = trace_geom_face(f1, paired_with, flat_max_geom, base_off, H, W, Nx);
-    int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
-    saddle_nodes[id].max_arcs[arc_idx] = {target, base_off, result.length};
-  }
-  if (f2 != -1) {
-    int arc_idx = valid_max++;
-    int base_off = max_offsets[2 * id + arc_idx];
-    TraceResult result = trace_geom_face(f2, paired_with, flat_max_geom, base_off, H, W, Nx);
-    int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
-    saddle_nodes[id].max_arcs[arc_idx] = {target, base_off, result.length};
+    int valid_max = 0;
+    if (f1 != -1) {
+      int arc_idx = valid_max++;
+      int base_off = max_offsets[2 * id + arc_idx];
+      TraceResult result = trace_geom_face(f1, paired_with, flat_max_geom, base_off, H, W, Nx);
+      int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
+      saddle_nodes[id].max_arcs[arc_idx] = {target, base_off, result.length};
+    }
+    if (f2 != -1) {
+      int arc_idx = valid_max++;
+      int base_off = max_offsets[2 * id + arc_idx];
+      TraceResult result = trace_geom_face(f2, paired_with, flat_max_geom, base_off, H, W, Nx);
+      int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
+      saddle_nodes[id].max_arcs[arc_idx] = {target, base_off, result.length};
+    }
   }
 
   // MIN ARCS (Vertices)
-  int v1 = -1, v2 = -1;
-  if (type == 1) {
-    if (ex - 1 >= 0) v1 = cell_id(0, ey, ex - 1, Nx);
-    if (ex < W) v2 = cell_id(0, ey, ex, Nx);
-  } else {
-    if (ey - 1 >= 0) v1 = cell_id(0, ey - 1, ex, Nx);
-    if (ey < H) v2 = cell_id(0, ey, ex, Nx);
-  }
+  if (trace_min_arcs) {
+    int v1 = -1, v2 = -1;
+    if (type == 1) {
+      if (ex - 1 >= 0) v1 = cell_id(0, ey, ex - 1, Nx);
+      if (ex < W) v2 = cell_id(0, ey, ex, Nx);
+    } else {
+      if (ey - 1 >= 0) v1 = cell_id(0, ey - 1, ex, Nx);
+      if (ey < H) v2 = cell_id(0, ey, ex, Nx);
+    }
 
-  int valid_min = 0;
-  if (v1 != -1) {
-    int arc_idx = valid_min++;
-    int base_off = min_offsets[2 * id + arc_idx];
-    TraceResult result = trace_geom_vertex(v1, paired_with, flat_min_geom, base_off, H, W, Nx);
-    int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
-    saddle_nodes[id].min_arcs[arc_idx] = {target, base_off, result.length};
-  }
-  if (v2 != -1) {
-    int arc_idx = valid_min++;
-    int base_off = min_offsets[2 * id + arc_idx];
-    TraceResult result = trace_geom_vertex(v2, paired_with, flat_min_geom, base_off, H, W, Nx);
-    int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
-    saddle_nodes[id].min_arcs[arc_idx] = {target, base_off, result.length};
+    int valid_min = 0;
+    if (v1 != -1) {
+      int arc_idx = valid_min++;
+      int base_off = min_offsets[2 * id + arc_idx];
+      TraceResult result = trace_geom_vertex(v1, paired_with, flat_min_geom, base_off, H, W, Nx);
+      int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
+      saddle_nodes[id].min_arcs[arc_idx] = {target, base_off, result.length};
+    }
+    if (v2 != -1) {
+      int arc_idx = valid_min++;
+      int base_off = min_offsets[2 * id + arc_idx];
+      TraceResult result = trace_geom_vertex(v2, paired_with, flat_min_geom, base_off, H, W, Nx);
+      int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
+      saddle_nodes[id].min_arcs[arc_idx] = {target, base_off, result.length};
+    }
   }
 }
 
 void launch_trace_raw_arcs_geometry_cuda(const int* d_paired_with, const int* d_fast_crit_map,
                                          const int* d_crit_saddles, const int* d_max_offsets, const int* d_min_offsets,
                                          int* d_flat_max, int* d_flat_min, void* d_saddle_nodes, int H, int W, int Nx,
-                                         int num_saddles) {
+                                         int num_saddles, bool trace_max_arcs, bool trace_min_arcs) {
   int threads = 256;
   int blocks = (num_saddles + threads - 1) / threads;
 
-  trace_raw_arcs_geometry_kernel<<<blocks, threads>>>(d_paired_with, d_fast_crit_map, d_crit_saddles, d_max_offsets,
-                                                      d_min_offsets, d_flat_max, d_flat_min,
-                                                      (SaddleNode*)d_saddle_nodes, H, W, Nx, num_saddles);
+  trace_raw_arcs_geometry_kernel<<<blocks, threads>>>(
+      d_paired_with, d_fast_crit_map, d_crit_saddles, d_max_offsets, d_min_offsets, d_flat_max, d_flat_min,
+      (SaddleNode*)d_saddle_nodes, H, W, Nx, num_saddles, trace_max_arcs, trace_min_arcs);
 }

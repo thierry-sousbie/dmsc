@@ -12,15 +12,20 @@
 #include "./cell_compare.hxx"
 #include "./gradient_struct.hxx"
 
+#define DEFAULT_GRADIENT_BLOCK_SIZE 128
+
 namespace cpu {
 
 template <bool IS_DUAL, typename scalar_t>
-void compute_gradient(int total_blocks, int num_blocks_x, int block_size, int H, int W, int Nx, const scalar_t* data,
-                      std::vector<int>& paired_with) {
+void compute_gradient(int block_size, int H, int W, int Nx, const scalar_t* data, std::vector<int>& paired_with) {
   // --- DISCRETE GRADIENT ---
   // See "Theory and Algorithms for Constructing Discrete Morse Complexes from Grayscale Digital Images" by Robins et
   // al. (2011)
   RECORD_FUNCTION("compute_gradient_cpu", {});
+  int num_blocks_y = (H + block_size - 1) / block_size;
+  int num_blocks_x = (W + block_size - 1) / block_size;
+  int total_blocks = num_blocks_y * num_blocks_x;
+
   paired_with.assign(4 * (H + 1) * (W + 1), -1);
 
   at::parallel_for(0, total_blocks, 1, [&](int64_t start, int64_t end) {
@@ -228,12 +233,12 @@ void update_gradient_helpers(Workspace& ws, const scalar_t* data) {
 }
 
 template <bool IS_DUAL, typename Workspace, typename scalar_t = float>
-void compute_gradient_and_crit_points(Workspace& ws, const torch::Tensor& scalar_field, int total_blocks,
-                                      int num_blocks_x, int block_size) {
+void compute_gradient_and_crit_points(Workspace& ws, const torch::Tensor& scalar_field,
+                                      int block_size = DEFAULT_GRADIENT_BLOCK_SIZE) {
   const scalar_t* data = scalar_field.data_ptr<scalar_t>();
   GradientData& gd = ws.gradient_data;
 
-  compute_gradient<IS_DUAL>(total_blocks, num_blocks_x, block_size, ws.H, ws.W, ws.Nx, data, gd.paired_with);
+  compute_gradient<IS_DUAL>(block_size, ws.H, ws.W, ws.Nx, data, gd.paired_with);
   extract_critical_points(gd.paired_with, ws.H, ws.W, ws.Nx, gd.cp.mins, gd.cp.saddles, gd.cp.maxes);
   update_gradient_helpers<IS_DUAL>(ws, data);
 }

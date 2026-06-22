@@ -9,7 +9,7 @@ from contextlib import contextmanager
 import torch
 from torch.profiler import ProfilerActivity, profile, record_function
 
-from csrc.dmsc import compute_dmsc
+from dmsc import compute_dmsc
 
 try:
     libc = ctypes.CDLL(None)
@@ -141,13 +141,26 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
 
 
 def run_all_benchmarks(
-    enable_profiler=False, test_cpu=True, test_gpu=True, trace_arcs=True, trace_manifolds=True, test_batches=True
+    enable_profiler=False,
+    test_cpu=True,
+    test_gpu=True,
+    trace_valleys=True,
+    trace_ridges=True,
+    trace_peaks=True,
+    trace_basins=True,
+    test_batches=True,
+    num_threads=None,
+    resolution=None,
 ):
+    if resolution is None:
+        resolution = 2048
 
-    H, W = 2048, 2048
+    H, W = resolution, resolution
     # H, W = 1024, 1024
     # H, W = 512, 512
-    num_threads = multiprocessing.cpu_count()
+
+    if num_threads < 0:
+        num_threads = multiprocessing.cpu_count()
 
     print(f"Generating {H}x{W} noisy landscape...")
     img_cpu = generate_noisy_landscape(H, W)
@@ -180,9 +193,10 @@ def run_all_benchmarks(
                 t,
                 num_runs=2,
                 run_profiler=enable_profiler,
-                block_size=128,
-                trace_arcs=trace_arcs,
-                trace_manifolds=trace_manifolds,
+                trace_valleys=trace_valleys,
+                trace_ridges=trace_ridges,
+                trace_peaks=trace_peaks,
+                trace_basins=trace_basins,
             )
 
             # 2. CPU Max Threads (Sequential)
@@ -194,9 +208,10 @@ def run_all_benchmarks(
                 t,
                 num_runs=10,
                 run_profiler=enable_profiler,
-                block_size=128,
-                trace_arcs=trace_arcs,
-                trace_manifolds=trace_manifolds,
+                trace_valleys=trace_valleys,
+                trace_ridges=trace_ridges,
+                trace_peaks=trace_peaks,
+                trace_basins=trace_basins,
             )
 
             # 3. CPU Max Threads (Batched)
@@ -208,10 +223,11 @@ def run_all_benchmarks(
                     t,
                     num_runs=10,
                     run_profiler=enable_profiler,
-                    block_size=128,
                     is_batched=True,
-                    trace_arcs=trace_arcs,
-                    trace_manifolds=trace_manifolds,
+                    trace_valleys=trace_valleys,
+                    trace_ridges=trace_ridges,
+                    trace_peaks=trace_peaks,
+                    trace_basins=trace_basins,
                 )
 
         # Hardware Accelerated (GPU)
@@ -226,9 +242,10 @@ def run_all_benchmarks(
                 t,
                 num_runs=10,
                 run_profiler=enable_profiler,
-                block_size=128,
-                trace_arcs=trace_arcs,
-                trace_manifolds=trace_manifolds,
+                trace_valleys=trace_valleys,
+                trace_ridges=trace_ridges,
+                trace_peaks=trace_peaks,
+                trace_basins=trace_basins,
             )
 
             # 5. GPU (Batched)
@@ -240,10 +257,11 @@ def run_all_benchmarks(
                     t,
                     num_runs=10,
                     run_profiler=enable_profiler,
-                    block_size=128,
                     is_batched=True,
-                    trace_arcs=trace_arcs,
-                    trace_manifolds=trace_manifolds,
+                    trace_valleys=trace_valleys,
+                    trace_ridges=trace_ridges,
+                    trace_peaks=trace_peaks,
+                    trace_basins=trace_basins,
                 )
 
 
@@ -252,8 +270,30 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Topology Extraction Benchmark")
     parser.add_argument("--profile", action="store_true", help="Run an additional pass with torch.profiler")
+    parser.add_argument(
+        "--no-valleys", action="store_false", dest="trace_valleys", default=True, help="Disable tracing valleys"
+    )
+    parser.add_argument(
+        "--no-ridges", action="store_false", dest="trace_ridges", default=True, help="Disable tracing ridges"
+    )
+    parser.add_argument(
+        "--no-peaks", action="store_false", dest="trace_peaks", default=True, help="Disable tracing peaks"
+    )
+    parser.add_argument(
+        "--no-basins", action="store_false", dest="trace_basins", default=True, help="Disable tracing basins"
+    )
+    parser.add_argument("--resolution", type=int, default=2048, help="Image resolution")
+    parser.add_argument("--num_threads", type=int, default=4, help="Number of threads to use (-1 -> max avail.)")
     args = parser.parse_args()
 
-    run_all_benchmarks(enable_profiler=args.profile)
+    run_all_benchmarks(
+        enable_profiler=args.profile,
+        trace_valleys=args.trace_valleys,
+        trace_ridges=args.trace_ridges,
+        trace_peaks=args.trace_peaks,
+        trace_basins=args.trace_basins,
+        num_threads=args.num_threads,
+        resolution=args.resolution,
+    )
     if args.profile:
         print("Visit http://ui.perfetto.dev to check your profiling results.")
