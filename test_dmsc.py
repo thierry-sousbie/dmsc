@@ -615,7 +615,15 @@ def run_evaluation(img, H, W, extraction_fn, suffix, no_plots=False, seed=None, 
         )
 
 
-def test_dmsc(no_plots=False, with_loop=True, trace_valleys=True, trace_ridges=True, trace_peaks=True, trace_basins=True, seed=None):
+def test_dmsc(
+    no_plots=False,
+    with_loop=True,
+    trace_valleys=True,
+    trace_ridges=True,
+    trace_peaks=True,
+    trace_basins=True,
+    seed=None,
+):
     print(f"Default Threads: {torch.get_num_threads()}")
 
     H, W = 128, 128

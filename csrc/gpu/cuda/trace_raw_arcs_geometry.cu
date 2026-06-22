@@ -106,7 +106,8 @@ __device__ inline TraceResult trace_geom_vertex(int start_v, const int* paired_w
 __global__ void trace_raw_arcs_geometry_kernel(const int* paired_with, const int* fast_crit_map,
                                                const int* crit_saddles, const int* max_offsets, const int* min_offsets,
                                                int* flat_max_geom, int* flat_min_geom, SaddleNode* saddle_nodes, int H,
-                                               int W, int Nx, int num_saddles, bool trace_max_arcs, bool trace_min_arcs) {
+                                               int W, int Nx, int num_saddles, bool trace_max_arcs,
+                                               bool trace_min_arcs) {
   int id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id >= num_saddles) return;
 
@@ -183,8 +184,7 @@ void launch_trace_raw_arcs_geometry_cuda(const int* d_paired_with, const int* d_
   int threads = 256;
   int blocks = (num_saddles + threads - 1) / threads;
 
-  trace_raw_arcs_geometry_kernel<<<blocks, threads>>>(d_paired_with, d_fast_crit_map, d_crit_saddles, d_max_offsets,
-                                                      d_min_offsets, d_flat_max, d_flat_min,
-                                                      (SaddleNode*)d_saddle_nodes, H, W, Nx, num_saddles,
-                                                      trace_max_arcs, trace_min_arcs);
+  trace_raw_arcs_geometry_kernel<<<blocks, threads>>>(
+      d_paired_with, d_fast_crit_map, d_crit_saddles, d_max_offsets, d_min_offsets, d_flat_max, d_flat_min,
+      (SaddleNode*)d_saddle_nodes, H, W, Nx, num_saddles, trace_max_arcs, trace_min_arcs);
 }

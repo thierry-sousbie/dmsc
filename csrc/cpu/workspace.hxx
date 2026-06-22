@@ -100,7 +100,8 @@ struct Workspace {
   }
 
   template <bool IS_DUAL = false>
-  DMSComplex complex(bool return_gradient, bool trace_max_arcs, bool trace_min_arcs, bool trace_face_groups, bool trace_vertex_groups) {
+  DMSComplex complex(bool return_gradient, bool trace_max_arcs, bool trace_min_arcs, bool trace_face_groups,
+                     bool trace_vertex_groups) {
     RECORD_FUNCTION("Workspace::complex", {});
 
     auto opts_i = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
@@ -310,9 +311,9 @@ struct Workspace {
     result.shape.template accessor<int32_t, 1>()[1] = W;
 
     result.sad_pts = hlp.out_sad_pts.get().clone();
-    result.grad_indices = return_gradient
-                              ? hlp.out_grad.copy_from_cpu_ptr(gradient_data.paired_with.data(), {num_cells}, opts_i).clone()
-                              : torch::empty({0}, opts_i);
+    result.grad_indices =
+        return_gradient ? hlp.out_grad.copy_from_cpu_ptr(gradient_data.paired_with.data(), {num_cells}, opts_i).clone()
+                        : torch::empty({0}, opts_i);
 
     auto t_max = hlp.out_max_pts.get().slice(0, 0, max_count).clone();
     auto t_min = hlp.out_min_pts.get().slice(0, 0, min_count).clone();

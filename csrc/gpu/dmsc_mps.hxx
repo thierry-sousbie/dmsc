@@ -232,8 +232,7 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   {
     RECORD_FUNCTION("kernel", {});
     launch_trace_raw_arcs_geometry_metal(gdata.d_paired_with.get(), d_fast_crit_map, gdata.d_saddles.get(),
-                                         d_max_offsets, d_min_offsets, 
-                                         trace_max_arcs ? d_flat_max : torch::Tensor(),
+                                         d_max_offsets, d_min_offsets, trace_max_arcs ? d_flat_max : torch::Tensor(),
                                          trace_min_arcs ? d_flat_min : torch::Tensor(), d_saddle_nodes, H, W, Nx,
                                          num_saddles, trace_max_arcs, trace_min_arcs);
   }

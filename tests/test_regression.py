@@ -17,7 +17,9 @@ def landscape():
     return torch.load(path)
 
 
-def assert_mscomplex_equivalence(gt_dict, computed_ms, trace_valleys=True, trace_ridges=True, trace_peaks=True, trace_basins=True):
+def assert_mscomplex_equivalence(
+    gt_dict, computed_ms, trace_valleys=True, trace_ridges=True, trace_peaks=True, trace_basins=True
+):
     """
     Asserts that the computed MSComplex is topologically and geometrically equivalent
     to the ground truth dictionary, ignoring arbitrary ordering of arrays.
@@ -113,7 +115,19 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms, trace_valleys=True, trace
 @pytest.mark.parametrize("trace_ridges", [True, False])
 @pytest.mark.parametrize("trace_peaks", [True, False])
 @pytest.mark.parametrize("trace_basins", [True, False])
-def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filtered, threshold, trace_valleys, trace_ridges, trace_peaks, trace_basins):
+def test_dmsc_regression(
+    landscape,
+    mode,
+    threads,
+    device_str,
+    is_dual,
+    is_filtered,
+    threshold,
+    trace_valleys,
+    trace_ridges,
+    trace_peaks,
+    trace_basins,
+):
     device = torch.device(device_str)
     # The extension will throw an error if the GPU device is missing on this platform
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -134,15 +148,15 @@ def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filte
 
     # Compute MS complex
     ms = compute_dmsc(
-        img, 
-        threshold, 
-        return_gradient=not is_filtered, 
-        is_dual=is_dual, 
+        img,
+        threshold,
+        return_gradient=not is_filtered,
+        is_dual=is_dual,
         block_size=32,
         trace_valleys=trace_valleys,
         trace_ridges=trace_ridges,
         trace_peaks=trace_peaks,
-        trace_basins=trace_basins
+        trace_basins=trace_basins,
     )
 
     # Validate Equivalence

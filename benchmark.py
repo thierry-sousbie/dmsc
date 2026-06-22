@@ -141,7 +141,14 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
 
 
 def run_all_benchmarks(
-    enable_profiler=False, test_cpu=True, test_gpu=True, trace_valleys=True, trace_ridges=True, trace_peaks=True, trace_basins=True, test_batches=True
+    enable_profiler=False,
+    test_cpu=True,
+    test_gpu=True,
+    trace_valleys=True,
+    trace_ridges=True,
+    trace_peaks=True,
+    trace_basins=True,
+    test_batches=True,
 ):
 
     H, W = 2048, 2048

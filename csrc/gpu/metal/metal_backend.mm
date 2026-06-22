@@ -579,9 +579,9 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
     id<MTLBuffer> d_ready_list = [g_ctx.device newBufferWithLength:(num_cancels * sizeof(int))
                                                            options:MTLResourceStorageModePrivate];
     id<MTLBuffer> d_ready_R0 = [g_ctx.device newBufferWithLength:(num_cancels * sizeof(int))
-                                                           options:MTLResourceStorageModePrivate];
+                                                         options:MTLResourceStorageModePrivate];
     id<MTLBuffer> d_ready_R1 = [g_ctx.device newBufferWithLength:(num_cancels * sizeof(int))
-                                                           options:MTLResourceStorageModePrivate];
+                                                         options:MTLResourceStorageModePrivate];
 
     id<MTLBuffer> d_temp_weights = [g_ctx.device newBufferWithLength:(num_extrema * sizeof(uint64_t))
                                                              options:MTLResourceStorageModePrivate];

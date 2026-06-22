@@ -104,7 +104,8 @@ struct Workspace {
   }
 
   template <bool IS_DUAL = false>
-  DMSComplex complex(bool return_gradient, bool trace_max_arcs, bool trace_min_arcs, bool trace_face_groups, bool trace_vertex_groups) {
+  DMSComplex complex(bool return_gradient, bool trace_max_arcs, bool trace_min_arcs, bool trace_face_groups,
+                     bool trace_vertex_groups) {
     RECORD_FUNCTION("Workspace::complex", {});
 
     auto dev = d_data.device();
@@ -248,8 +249,10 @@ struct Workspace {
             int* out_ridge_faces_off = hlp.out_ridge_faces_off.request({num_arcs + 1}, opts_i).template data_ptr<int>();
             int* out_arc_faces_off = hlp.out_arc_faces_off.request({num_arcs}, opts_i).template data_ptr<int>();
 
-            int* out_ridge_vertices = hlp.out_ridge_vertices.request({num_ridge_vertices}, opts_i).template data_ptr<int>();
-            int* out_ridge_vertices_off = hlp.out_ridge_vertices_off.request({num_arcs + 1}, opts_i).template data_ptr<int>();
+            int* out_ridge_vertices =
+                hlp.out_ridge_vertices.request({num_ridge_vertices}, opts_i).template data_ptr<int>();
+            int* out_ridge_vertices_off =
+                hlp.out_ridge_vertices_off.request({num_arcs + 1}, opts_i).template data_ptr<int>();
             int* out_arc_vertices_off = hlp.out_arc_vertices_off.request({num_arcs}, opts_i).template data_ptr<int>();
 
             // Flatten geometric arcs continuously in memory and track array offsets
@@ -302,18 +305,21 @@ struct Workspace {
     result.shape.template accessor<int32_t, 1>()[0] = H;
     result.shape.template accessor<int32_t, 1>()[1] = W;
 
-    torch::Tensor d_max_alive = torch::from_blob((void*)max_alive.data(), {(long)crit_maxes.size()}, torch::kUInt8).to(dev, /*non_blocking=*/true).to(torch::kBool);
-    torch::Tensor d_min_alive = torch::from_blob((void*)min_alive.data(), {(long)crit_mins.size()}, torch::kUInt8).to(dev, /*non_blocking=*/true).to(torch::kBool);
+    torch::Tensor d_max_alive = torch::from_blob((void*)max_alive.data(), {(long)crit_maxes.size()}, torch::kUInt8)
+                                    .to(dev, /*non_blocking=*/true)
+                                    .to(torch::kBool);
+    torch::Tensor d_min_alive = torch::from_blob((void*)min_alive.data(), {(long)crit_mins.size()}, torch::kUInt8)
+                                    .to(dev, /*non_blocking=*/true)
+                                    .to(torch::kBool);
 
     // Filter points purely on device!
     auto t_max = gradient_data.d_maxes.get().masked_select(d_max_alive).clone();
     auto t_min = gradient_data.d_mins.get().masked_select(d_min_alive).clone();
 
     auto t_sad = hlp.out_sad_pts.get().slice(0, 0, num_surviving_sads).to(dev).clone();
-    
+
     result.sad_pts = t_sad;
-    result.grad_indices = return_gradient ? gradient_data.d_paired_with.get().clone()
-                                          : torch::empty({0}, dev_opts_i);
+    result.grad_indices = return_gradient ? gradient_data.d_paired_with.get().clone() : torch::empty({0}, dev_opts_i);
 
     auto t_e_max = hlp.out_e_max.get().slice(0, 0, e_max_count).to(dev).clone();
     auto t_e_min = hlp.out_e_min.get().slice(0, 0, e_min_count).to(dev).clone();
@@ -323,15 +329,21 @@ struct Workspace {
     auto t_ppairs_min = hlp.out_ppairs_min.get().slice(0, 0, num_surviving_sads).to(dev).clone();
 
     auto t_ridge_faces = trace_max_arcs ? hlp.out_ridge_faces.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
-    auto t_ridge_faces_off = trace_max_arcs ? hlp.out_ridge_faces_off.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
+    auto t_ridge_faces_off =
+        trace_max_arcs ? hlp.out_ridge_faces_off.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
     auto t_arc_faces_off = trace_max_arcs ? hlp.out_arc_faces_off.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
 
-    auto t_ridge_vertices = trace_min_arcs ? hlp.out_ridge_vertices.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
-    auto t_ridge_vertices_off = trace_min_arcs ? hlp.out_ridge_vertices_off.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
-    auto t_arc_vertices_off = trace_min_arcs ? hlp.out_arc_vertices_off.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
+    auto t_ridge_vertices =
+        trace_min_arcs ? hlp.out_ridge_vertices.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
+    auto t_ridge_vertices_off =
+        trace_min_arcs ? hlp.out_ridge_vertices_off.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
+    auto t_arc_vertices_off =
+        trace_min_arcs ? hlp.out_arc_vertices_off.get().to(dev).clone() : torch::empty({0}, dev_opts_i);
 
-    auto t_face_groups = trace_face_groups ? cell_groups.face_groups.get().to(dev).clone() : torch::empty({0, 0}, dev_opts_i);
-    auto t_vertex_groups = trace_vertex_groups ? cell_groups.vertex_groups.get().to(dev).clone() : torch::empty({0, 0}, dev_opts_i);
+    auto t_face_groups =
+        trace_face_groups ? cell_groups.face_groups.get().to(dev).clone() : torch::empty({0, 0}, dev_opts_i);
+    auto t_vertex_groups =
+        trace_vertex_groups ? cell_groups.vertex_groups.get().to(dev).clone() : torch::empty({0, 0}, dev_opts_i);
 
     // 5. Permute definitions of Maxima vs Minima depending on whether this is a Primal or Dual complex
     if (IS_DUAL) {

@@ -122,7 +122,7 @@ __global__ void trace_saddles_kernel(const float* __restrict__ data, const int* 
                                      int* __restrict__ max_c2, int* __restrict__ min_c1, int* __restrict__ min_c2,
                                      float* __restrict__ s_vals, int* __restrict__ max_len, int* __restrict__ min_len,
                                      int H, int W, int Nx, int num_saddles, int* __restrict__ global_saddle_index) {
-  while (true) {
+    while (true) {
     int id = atomicAdd(global_saddle_index, 1);
     if (id >= num_saddles) break;
 

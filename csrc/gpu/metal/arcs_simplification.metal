@@ -98,13 +98,13 @@ kernel void evaluate_cancellations_metal(
 }
 
 kernel void contract_cancellations_metal(
-    const device int* ready_list [[buffer(0)]], const device int* ready_R0 [[buffer(1)]], const device int* ready_R1 [[buffer(2)]],
-    const device int* cancels [[buffer(3)]], const device int* init_t [[buffer(4)]],
-    const device int* base_lens [[buffer(5)]], device int* parent_ptrs [[buffer(6)]],
-    device PathRef* weights [[buffer(7)]], device DAGNode* dag [[buffer(8)]],
+    const device int* ready_list [[buffer(0)]], const device int* ready_R0 [[buffer(1)]],
+    const device int* ready_R1 [[buffer(2)]], const device int* cancels [[buffer(3)]],
+    const device int* init_t [[buffer(4)]], const device int* base_lens [[buffer(5)]],
+    device int* parent_ptrs [[buffer(6)]], device PathRef* weights [[buffer(7)]], device DAGNode* dag [[buffer(8)]],
     device atomic_int* dag_sz [[buffer(9)]], device uint8_t* alive [[buffer(10)]],
-    device uint8_t* pending [[buffer(11)]], constant int& num_ready [[buffer(12)]],
-    constant int& N2 [[buffer(13)]], uint id [[thread_position_in_grid]]) {
+    device uint8_t* pending [[buffer(11)]], constant int& num_ready [[buffer(12)]], constant int& N2 [[buffer(13)]],
+    uint id [[thread_position_in_grid]]) {
   if (id >= (uint)num_ready) return;
 
   int cancel_idx = ready_list[id];

@@ -159,14 +159,40 @@ class MSComplex:
         return iter(astuple(self))
 
 
-def extract_full_complex(img, persistence_threshold, block_size, return_gradient, is_dual, trace_max_arcs, trace_min_arcs, trace_face_groups, trace_vertex_groups):
+def extract_full_complex(
+    img,
+    persistence_threshold,
+    block_size,
+    return_gradient,
+    is_dual,
+    trace_max_arcs,
+    trace_min_arcs,
+    trace_max_groups,
+    trace_min_groups,
+):
     if img.device.type == "cuda" or img.device.type == "mps":
         return dmsc_gpu.extract_dmsc(
-            img, persistence_threshold, block_size, return_gradient, is_dual, trace_max_arcs, trace_min_arcs, trace_face_groups, trace_vertex_groups
+            img,
+            persistence_threshold,
+            block_size,
+            return_gradient,
+            is_dual,
+            trace_max_arcs,
+            trace_min_arcs,
+            trace_max_groups,
+            trace_min_groups,
         )
     else:
         return dmsc_cpu.extract_dmsc(
-            img, persistence_threshold, block_size, return_gradient, is_dual, trace_max_arcs, trace_min_arcs, trace_face_groups, trace_vertex_groups
+            img,
+            persistence_threshold,
+            block_size,
+            return_gradient,
+            is_dual,
+            trace_max_arcs,
+            trace_min_arcs,
+            trace_max_groups,
+            trace_min_groups,
         )
 
 
@@ -191,20 +217,17 @@ def compute_dmsc(
 
     start_time = time.perf_counter()
 
-    if is_dual:
-        trace_max_arcs = trace_valleys
-        trace_min_arcs = trace_ridges
-        trace_face_groups = trace_basins
-        trace_vertex_groups = trace_peaks
-    else:
-        trace_max_arcs = trace_ridges
-        trace_min_arcs = trace_valleys
-        trace_face_groups = trace_peaks
-        trace_vertex_groups = trace_basins
-
     # The C++ unified API automatically handles both single and batched layouts
     output = extract_full_complex(
-        img, persistence_threshold, block_size, return_gradient, is_dual, trace_max_arcs, trace_min_arcs, trace_face_groups, trace_vertex_groups
+        img,
+        persistence_threshold,
+        block_size,
+        return_gradient,
+        is_dual,
+        trace_max_arcs=trace_ridges,
+        trace_min_arcs=trace_valleys,
+        trace_max_groups=trace_peaks,
+        trace_min_groups=trace_basins,
     )
 
     end_time = time.perf_counter()
