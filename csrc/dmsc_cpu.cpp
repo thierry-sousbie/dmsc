@@ -38,7 +38,6 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
     std::swap(trace_max_arcs, trace_min_arcs);
     std::swap(trace_max_groups, trace_min_groups);
   }
-
   int num_blocks_y = (H + block_size - 1) / block_size;
   int num_blocks_x = (W + block_size - 1) / block_size;
   int total_blocks = num_blocks_y * num_blocks_x;

@@ -61,12 +61,18 @@ def assert_mscomplex_equivalence(
         cp_r = strip_duplicates(computed_ms.ridges.cpu().numpy())
         assert len(gt_r) == len(cp_r), "Total ridge length differ"
         assert len(gt_dict["ridge_offsets"]) == len(computed_ms.ridge_offsets), "Number of ridge offsets differ"
+    else:
+        assert len(computed_ms.ridges) == 0, "Expected ridges to be empty"
+        assert len(computed_ms.ridge_offsets) == 0, "Expected ridge_offsets to be empty"
 
     if trace_valleys:
         gt_v = strip_duplicates(gt_dict["valleys"].cpu().numpy())
         cp_v = strip_duplicates(computed_ms.valleys.cpu().numpy())
         assert len(gt_v) == len(cp_v), "Total valley length differ"
         assert len(gt_dict["valley_offsets"]) == len(computed_ms.valley_offsets), "Number of valley offsets differ"
+    else:
+        assert len(computed_ms.valleys) == 0, "Expected valleys to be empty"
+        assert len(computed_ms.valley_offsets) == 0, "Expected valley_offsets to be empty"
 
     # 5. Check region equivalence (Peaks and Basins)
     def check_regions(gt_regions, comp_regions, name="Regions"):
@@ -101,8 +107,13 @@ def assert_mscomplex_equivalence(
 
     if trace_peaks:
         check_regions(gt_dict["peaks"], computed_ms.peaks, "Peaks")
+    else:
+        assert computed_ms.peaks is None or len(computed_ms.peaks) == 0, "Expected peaks to be empty"
+
     if trace_basins:
         check_regions(gt_dict["basins"], computed_ms.basins, "Basins")
+    else:
+        assert computed_ms.basins is None or len(computed_ms.basins) == 0, "Expected basins to be empty"
 
 
 @pytest.mark.parametrize(

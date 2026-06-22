@@ -181,9 +181,19 @@ def plot_dmsc_complex(
 
     # 3. Plot Topological Edges (Manifolds or Straight Lines)
     if plot_edges:
-        has_manifolds = len(ms_complex.ridges) > 0 or len(ms_complex.valleys) > 0
 
-        if has_manifolds:
+        def add_edges(saddles, targets, edges_indices, color, style):
+            if edges_indices is None or len(edges_indices) == 0:
+                return
+            segs = []
+            for s_idx, t_idx in edges_indices.cpu().numpy():
+                sy, sx = saddles[s_idx]
+                ty, tx = targets[t_idx]
+                segs.append([[sx, sy], [tx, ty]])
+            lc = mcoll.LineCollection(segs, colors=color, linestyles=style, linewidths=1.5, alpha=0.7, zorder=3)
+            ax.add_collection(lc)
+
+        if len(ms_complex.ridges) > 0:
             for i in range(len(sad_pts)):
                 arc1, arc2 = ms_complex.get_ridge(i, split_arcs=True)
                 for arc in (arc1, arc2):
@@ -198,7 +208,11 @@ def plot_dmsc_complex(
                             alpha=0.7,
                             zorder=3,
                         )
+        else:
+            add_edges(sad_pts, max_pts, edges_max, color="red", style="solid")
 
+        if len(ms_complex.valleys) > 0:
+            for i in range(len(sad_pts)):
                 arc1, arc2 = ms_complex.get_valley(i, split_arcs=True)
                 for arc in (arc1, arc2):
                     if len(arc) > 0:
@@ -213,19 +227,6 @@ def plot_dmsc_complex(
                             zorder=3,
                         )
         else:
-            # Safely fall back to straight line segments if no manifolds were explicitly computed (e.g. GPU)
-            def add_edges(saddles, targets, edges_indices, color, style):
-                if edges_indices is None or len(edges_indices) == 0:
-                    return
-                segs = []
-                for s_idx, t_idx in edges_indices.cpu().numpy():
-                    sy, sx = saddles[s_idx]
-                    ty, tx = targets[t_idx]
-                    segs.append([[sx, sy], [tx, ty]])
-                lc = mcoll.LineCollection(segs, colors=color, linestyles=style, linewidths=1.5, alpha=0.7, zorder=3)
-                ax.add_collection(lc)
-
-            add_edges(sad_pts, max_pts, edges_max, color="red", style="solid")
             add_edges(sad_pts, min_pts, edges_min, color="blue", style="dashed")
 
     # 3.5 Plot Persistence Pair Connections
@@ -304,7 +305,7 @@ def plot_dmsc_complex(
 def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_boundaries=True, plot_edges=False):
     """Plots the basin manifolds correctly staggered by half a pixel."""
 
-    if ms_complex.basins is None or ms_complex.basins.numel == 0:
+    if ms_complex.basins is None or ms_complex.basins.numel() == 0:
         ax.set_title(f"{title}\n(Not Computed)")
         ax.axis("off")
         return
@@ -371,9 +372,19 @@ def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_bound
 
     # Plot Topological Edges (Manifolds or Straight Lines) overlayed on Basins
     if plot_edges:
-        has_manifolds = len(ms_complex.ridges) > 0 or len(ms_complex.valleys) > 0
 
-        if has_manifolds:
+        def add_edges(saddles, targets, edges_indices, color, style):
+            if edges_indices is None or len(edges_indices) == 0:
+                return
+            segs = []
+            for s_idx, t_idx in edges_indices.cpu().numpy():
+                sy, sx = saddles[s_idx]
+                ty, tx = targets[t_idx]
+                segs.append([[sx, sy], [tx, ty]])
+            lc = mcoll.LineCollection(segs, colors=color, linestyles=style, linewidths=1.5, alpha=0.7, zorder=3)
+            ax.add_collection(lc)
+
+        if len(ms_complex.ridges) > 0:
             for i in range(len(sad_pts)):
                 arc1, arc2 = ms_complex.get_ridge(i, split_arcs=True)
                 for arc in (arc1, arc2):
@@ -388,7 +399,11 @@ def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_bound
                             alpha=0.7,
                             zorder=3,
                         )
+        else:
+            add_edges(sad_pts, max_pts, ms_complex.e_max, color="red", style="solid")
 
+        if len(ms_complex.valleys) > 0:
+            for i in range(len(sad_pts)):
                 arc1, arc2 = ms_complex.get_valley(i, split_arcs=True)
                 for arc in (arc1, arc2):
                     if len(arc) > 0:
@@ -403,19 +418,6 @@ def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_bound
                             zorder=3,
                         )
         else:
-
-            def add_edges(saddles, targets, edges_indices, color, style):
-                if edges_indices is None or len(edges_indices) == 0:
-                    return
-                segs = []
-                for s_idx, t_idx in edges_indices.cpu().numpy():
-                    sy, sx = saddles[s_idx]
-                    ty, tx = targets[t_idx]
-                    segs.append([[sx, sy], [tx, ty]])
-                lc = mcoll.LineCollection(segs, colors=color, linestyles=style, linewidths=1.5, alpha=0.7, zorder=3)
-                ax.add_collection(lc)
-
-            add_edges(sad_pts, max_pts, ms_complex.e_max, color="red", style="solid")
             add_edges(sad_pts, min_pts, ms_complex.e_min, color="blue", style="dashed")
 
     # Plot critical nodes to verify alignment
@@ -705,6 +707,18 @@ if __name__ == "__main__":
     # Setup argparse for command line seed input
     parser = argparse.ArgumentParser(description="Test DMSC")
     parser.add_argument("--seed", type=int, default=1780627675, help="Random seed for generating the noisy landscape.")
+    parser.add_argument(
+        "--no-valleys", action="store_false", dest="trace_valleys", default=True, help="Disable tracing valleys"
+    )
+    parser.add_argument(
+        "--no-ridges", action="store_false", dest="trace_ridges", default=True, help="Disable tracing ridges"
+    )
+    parser.add_argument(
+        "--no-peaks", action="store_false", dest="trace_peaks", default=True, help="Disable tracing peaks"
+    )
+    parser.add_argument(
+        "--no-basins", action="store_false", dest="trace_basins", default=True, help="Disable tracing basins"
+    )
     args = parser.parse_args()
 
     # Determine seed: use provided or generate a unique one based on time
@@ -716,4 +730,10 @@ if __name__ == "__main__":
     np.random.seed(seed)
 
     os.makedirs("visualizations", exist_ok=True)
-    test_dmsc(seed=seed)
+    test_dmsc(
+        seed=seed,
+        trace_valleys=args.trace_valleys,
+        trace_ridges=args.trace_ridges,
+        trace_peaks=args.trace_peaks,
+        trace_basins=args.trace_basins,
+    )

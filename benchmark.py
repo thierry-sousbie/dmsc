@@ -269,8 +269,26 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Topology Extraction Benchmark")
     parser.add_argument("--profile", action="store_true", help="Run an additional pass with torch.profiler")
+    parser.add_argument(
+        "--no-valleys", action="store_false", dest="trace_valleys", default=True, help="Disable tracing valleys"
+    )
+    parser.add_argument(
+        "--no-ridges", action="store_false", dest="trace_ridges", default=True, help="Disable tracing ridges"
+    )
+    parser.add_argument(
+        "--no-peaks", action="store_false", dest="trace_peaks", default=True, help="Disable tracing peaks"
+    )
+    parser.add_argument(
+        "--no-basins", action="store_false", dest="trace_basins", default=True, help="Disable tracing basins"
+    )
     args = parser.parse_args()
 
-    run_all_benchmarks(enable_profiler=args.profile)
+    run_all_benchmarks(
+        enable_profiler=args.profile,
+        trace_valleys=args.trace_valleys,
+        trace_ridges=args.trace_ridges,
+        trace_peaks=args.trace_peaks,
+        trace_basins=args.trace_basins,
+    )
     if args.profile:
         print("Visit http://ui.perfetto.dev to check your profiling results.")
