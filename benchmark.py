@@ -149,12 +149,18 @@ def run_all_benchmarks(
     trace_peaks=True,
     trace_basins=True,
     test_batches=True,
+    num_threads=None,
+    resolution=None,
 ):
+    if resolution is None:
+        resolution = 2048
 
-    H, W = 2048, 2048
+    H, W = resolution, resolution
     # H, W = 1024, 1024
     # H, W = 512, 512
-    num_threads = multiprocessing.cpu_count()
+
+    if num_threads < 0:
+        num_threads = multiprocessing.cpu_count()
 
     print(f"Generating {H}x{W} noisy landscape...")
     img_cpu = generate_noisy_landscape(H, W)
@@ -281,6 +287,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-basins", action="store_false", dest="trace_basins", default=True, help="Disable tracing basins"
     )
+    parser.add_argument("--resolution", type=int, default=2048, help="Image resolution")
+    parser.add_argument("--num_threads", type=int, default=4, help="Number of threads to use (-1 -> max avail.)")
     args = parser.parse_args()
 
     run_all_benchmarks(
@@ -289,6 +297,8 @@ if __name__ == "__main__":
         trace_ridges=args.trace_ridges,
         trace_peaks=args.trace_peaks,
         trace_basins=args.trace_basins,
+        num_threads=args.num_threads,
+        resolution=args.resolution,
     )
     if args.profile:
         print("Visit http://ui.perfetto.dev to check your profiling results.")

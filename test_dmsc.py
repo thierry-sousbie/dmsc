@@ -473,14 +473,11 @@ def run_evaluation(img, H, W, extraction_fn, suffix, no_plots=False, seed=None, 
             f"visualizations/dmsc_dashboard_primal_{suffix}.png", img.cpu(), H, W, ms_raw, ms_flt, seed=seed
         )
 
-    print("Extracting Minima Regions (via inverted landscape)...")
+    print("Testing Dual Execution Mode (is_dual=True)...")
     ms_raw_min = extraction_fn(img, -1.0, return_gradient=True, is_dual=True, **kwargs)
     ms_flt_min = extraction_fn(img, 0.15, return_gradient=False, is_dual=True, **kwargs)
 
-    if not no_plots:
-        create_dashboard(
-            f"visualizations/dmsc_dashboard_dual_{suffix}.png", img.cpu(), H, W, ms_raw_min, ms_flt_min, seed=seed
-        )
+
 
 
 def test_dmsc(
