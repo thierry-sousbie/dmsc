@@ -38,8 +38,16 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   std::vector<int> min_offsets(num_saddles * 2 + 1, 0);
 
   for (int i = 0; i < num_saddles * 2; ++i) {
-    max_offsets[i + 1] = max_offsets[i] + max_arcs_len[i] + 1;
-    min_offsets[i + 1] = min_offsets[i] + min_arcs_len[i] + 1;
+    if (trace_max_arcs) {
+      max_offsets[i + 1] = max_offsets[i] + max_arcs_len[i] + 1;
+    } else {
+      max_offsets[i + 1] = 0;
+    }
+    if (trace_min_arcs) {
+      min_offsets[i + 1] = min_offsets[i] + min_arcs_len[i] + 1;
+    } else {
+      min_offsets[i + 1] = 0;
+    }
   }
 
   auto cpu_int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);

@@ -217,8 +217,16 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   {
     RECORD_FUNCTION("prepare", {});
     for (int i = 0; i < num_saddles * 2; ++i) {
-      max_offsets[i + 1] = max_offsets[i] + max_arcs_len[i] + 1;
-      min_offsets[i + 1] = min_offsets[i] + min_arcs_len[i] + 1;
+      if (trace_max_arcs) {
+        max_offsets[i + 1] = max_offsets[i] + max_arcs_len[i] + 1;
+      } else {
+        max_offsets[i + 1] = 0;
+      }
+      if (trace_min_arcs) {
+        min_offsets[i + 1] = min_offsets[i] + min_arcs_len[i] + 1;
+      } else {
+        min_offsets[i + 1] = 0;
+      }
     }
     out.nodes.resize(num_saddles);
   }
@@ -282,20 +290,23 @@ void simplify_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_a
     at::parallel_for(0, num_saddles, 1024, [&](int64_t start, int64_t end) {
       for (int64_t i = start; i < end; ++i) {
         int idx = static_cast<int>(i);
-        init_t_max[2 * idx] = sn.nodes[idx].max_arcs[0].target;
-        init_t_max[2 * idx + 1] = sn.nodes[idx].max_arcs[1].target;
-        init_t_min[2 * idx] = sn.nodes[idx].min_arcs[0].target;
-        init_t_min[2 * idx + 1] = sn.nodes[idx].min_arcs[1].target;
+        if (trace_max_arcs) {
+          init_t_max[2 * idx] = sn.nodes[idx].max_arcs[0].target;
+          init_t_max[2 * idx + 1] = sn.nodes[idx].max_arcs[1].target;
+          base_max_len[2 * idx] = sn.nodes[idx].max_arcs[0].length;
+          base_max_len[2 * idx + 1] = sn.nodes[idx].max_arcs[1].length;
+          base_max_offset[2 * idx] = sn.nodes[idx].max_arcs[0].offset;
+          base_max_offset[2 * idx + 1] = sn.nodes[idx].max_arcs[1].offset;
+        }
 
-        base_max_len[2 * idx] = sn.nodes[idx].max_arcs[0].length;
-        base_max_len[2 * idx + 1] = sn.nodes[idx].max_arcs[1].length;
-        base_max_offset[2 * idx] = sn.nodes[idx].max_arcs[0].offset;
-        base_max_offset[2 * idx + 1] = sn.nodes[idx].max_arcs[1].offset;
-
-        base_min_len[2 * idx] = sn.nodes[idx].min_arcs[0].length;
-        base_min_len[2 * idx + 1] = sn.nodes[idx].min_arcs[1].length;
-        base_min_offset[2 * idx] = sn.nodes[idx].min_arcs[0].offset;
-        base_min_offset[2 * idx + 1] = sn.nodes[idx].min_arcs[1].offset;
+        if (trace_min_arcs) {
+          init_t_min[2 * idx] = sn.nodes[idx].min_arcs[0].target;
+          init_t_min[2 * idx + 1] = sn.nodes[idx].min_arcs[1].target;
+          base_min_len[2 * idx] = sn.nodes[idx].min_arcs[0].length;
+          base_min_len[2 * idx + 1] = sn.nodes[idx].min_arcs[1].length;
+          base_min_offset[2 * idx] = sn.nodes[idx].min_arcs[0].offset;
+          base_min_offset[2 * idx + 1] = sn.nodes[idx].min_arcs[1].offset;
+        }
       }
     });
   }
