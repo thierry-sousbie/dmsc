@@ -31,7 +31,7 @@ void launch_trace_raw_arcs_geometry_metal(torch::Tensor d_paired_with, torch::Te
                                           torch::Tensor d_crit_saddles, torch::Tensor d_max_offsets,
                                           torch::Tensor d_min_offsets, torch::Tensor d_flat_max,
                                           torch::Tensor d_flat_min, torch::Tensor d_saddle_nodes, int H, int W, int Nx,
-                                          int num_saddles);
+                                          int num_saddles, bool trace_max_arcs, bool trace_min_arcs);
 
 void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t, torch::Tensor d_parent_ptrs,
                                 torch::Tensor d_weights, torch::Tensor d_dag, torch::Tensor d_base_lens,
@@ -91,7 +91,7 @@ void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
 }
 
 template <bool IS_DUAL = false, typename Workspace>
-void compute_cell_groups(Workspace& ws) {
+void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_vertex_groups) {
   RECORD_FUNCTION("cell_groups_gpu", {});
   const auto& gdata = ws.gradient_data;
   int H = ws.H;
@@ -159,12 +159,12 @@ void compute_cell_groups(Workspace& ws) {
   // Pre-allocate output on MPS, -2 means unknown
   torch::Tensor d_out_face_groups = ws.cell_groups.face_groups.request_full({H + 1, W + 1}, i_opts, -2);
   torch::Tensor d_out_vertex_groups = ws.cell_groups.vertex_groups.request_full({H, W}, i_opts, -2);
-  {
+  if (trace_face_groups) {
     RECORD_FUNCTION("trace_faces", {});
     launch_cell_groups_metal(ws.d_data, gdata.d_paired_with.get(), d_fast_crit_map, d_uf_max_parent, d_crit_maxes,
                              d_fast_region, d_out_face_groups, H, W, Nx, IS_DUAL, /*trace_faces=*/true);
   }
-  {
+  if (trace_vertex_groups) {
     RECORD_FUNCTION("trace_vertices", {});
     launch_cell_groups_metal(ws.d_data, gdata.d_paired_with.get(), d_fast_crit_map, d_uf_min_parent, d_crit_mins,
                              d_fast_region, d_out_vertex_groups, H, W, Nx, IS_DUAL, /*trace_faces=*/false);
@@ -186,7 +186,7 @@ void trace_from_saddles(Workspace& ws) {
 }
 
 template <typename Workspace>
-void trace_raw_arcs_geometry(Workspace& ws) {
+void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_arcs) {
   RECORD_FUNCTION("trace_raw_arcs_geometry_gpu", {});
   int H = ws.H;
   int W = ws.W;
@@ -232,8 +232,10 @@ void trace_raw_arcs_geometry(Workspace& ws) {
   {
     RECORD_FUNCTION("kernel", {});
     launch_trace_raw_arcs_geometry_metal(gdata.d_paired_with.get(), d_fast_crit_map, gdata.d_saddles.get(),
-                                         d_max_offsets, d_min_offsets, d_flat_max, d_flat_min, d_saddle_nodes, H, W, Nx,
-                                         num_saddles);
+                                         d_max_offsets, d_min_offsets, 
+                                         trace_max_arcs ? d_flat_max : torch::Tensor(),
+                                         trace_min_arcs ? d_flat_min : torch::Tensor(), d_saddle_nodes, H, W, Nx,
+                                         num_saddles, trace_max_arcs, trace_min_arcs);
   }
 
   // out.flat_max_geom = d_flat_max.cpu();
@@ -245,7 +247,7 @@ void trace_raw_arcs_geometry(Workspace& ws) {
 }
 
 template <typename Workspace>
-void simplify_arcs_geometry(Workspace& ws) {
+void simplify_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_arcs) {
   RECORD_FUNCTION("simplify_arcs_geometry_metal", {});
   auto& min_cancellations = ws.p_data.min_cancellations;
   auto& max_cancellations = ws.p_data.max_cancellations;
@@ -347,10 +349,14 @@ void simplify_arcs_geometry(Workspace& ws) {
   {
     RECORD_FUNCTION("Metal_Iterative_Contraction", {});
 
-    launch_simplify_arcs_metal(d_max_cancels, d_max_init_t, d_max_parent, d_max_weights, d_max_dag, d_max_base_lens,
-                               d_max_alive, d_max_pending, num_max_cancels, num_crit_maxes, N2, &max_dag_sz);
-    launch_simplify_arcs_metal(d_min_cancels, d_min_init_t, d_min_parent, d_min_weights, d_min_dag, d_min_base_lens,
-                               d_min_alive, d_min_pending, num_min_cancels, num_crit_mins, N2, &min_dag_sz);
+    if (trace_max_arcs) {
+      launch_simplify_arcs_metal(d_max_cancels, d_max_init_t, d_max_parent, d_max_weights, d_max_dag, d_max_base_lens,
+                                 d_max_alive, d_max_pending, num_max_cancels, num_crit_maxes, N2, &max_dag_sz);
+    }
+    if (trace_min_arcs) {
+      launch_simplify_arcs_metal(d_min_cancels, d_min_init_t, d_min_parent, d_min_weights, d_min_dag, d_min_base_lens,
+                                 d_min_alive, d_min_pending, num_min_cancels, num_crit_mins, N2, &min_dag_sz);
+    }
   }
 
   // Retrieve data and prepare it for assemble_simplified_geometry hapenning on CPU

@@ -256,7 +256,7 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
 }
 
 template <typename Workspace>
-void simplify_arcs_geometry(Workspace& ws) {
+void simplify_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_arcs) {
   RECORD_FUNCTION("simplify_arcs_geometry_flat", {});
   auto& min_cancellations = ws.p_data.min_cancellations;
   auto& max_cancellations = ws.p_data.max_cancellations;
@@ -351,6 +351,7 @@ void simplify_arcs_geometry(Workspace& ws) {
     tbb::parallel_invoke(
         // MAXIMA
         [&]() {
+          if (!trace_max_arcs) return;
           tbb::parallel_sort(max_cancellations.begin(), max_cancellations.end());
 
           for (const auto& cancel : max_cancellations) {
@@ -393,6 +394,7 @@ void simplify_arcs_geometry(Workspace& ws) {
 
         // MINIMA
         [&]() {
+          if (!trace_min_arcs) return;
           tbb::parallel_sort(min_cancellations.begin(), min_cancellations.end());
 
           for (const auto& cancel : min_cancellations) {

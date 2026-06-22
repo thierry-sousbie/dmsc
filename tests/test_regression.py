@@ -17,7 +17,7 @@ def landscape():
     return torch.load(path)
 
 
-def assert_mscomplex_equivalence(gt_dict, computed_ms):
+def assert_mscomplex_equivalence(gt_dict, computed_ms, trace_valleys=True, trace_ridges=True, trace_peaks=True, trace_basins=True):
     """
     Asserts that the computed MSComplex is topologically and geometrically equivalent
     to the ground truth dictionary, ignoring arbitrary ordering of arrays.
@@ -54,15 +54,17 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
         mask[1:] = arr[1:] != arr[:-1]
         return arr[mask]
 
-    gt_r = strip_duplicates(gt_dict["ridges"].cpu().numpy())
-    cp_r = strip_duplicates(computed_ms.ridges.cpu().numpy())
-    assert len(gt_r) == len(cp_r), "Total ridge length differ"
+    if trace_ridges:
+        gt_r = strip_duplicates(gt_dict["ridges"].cpu().numpy())
+        cp_r = strip_duplicates(computed_ms.ridges.cpu().numpy())
+        assert len(gt_r) == len(cp_r), "Total ridge length differ"
+        assert len(gt_dict["ridge_offsets"]) == len(computed_ms.ridge_offsets), "Number of ridge offsets differ"
 
-    gt_v = strip_duplicates(gt_dict["valleys"].cpu().numpy())
-    cp_v = strip_duplicates(computed_ms.valleys.cpu().numpy())
-    assert len(gt_v) == len(cp_v), "Total valley length differ"
-    assert len(gt_dict["ridge_offsets"]) == len(computed_ms.ridge_offsets), "Number of ridge offsets differ"
-    assert len(gt_dict["valley_offsets"]) == len(computed_ms.valley_offsets), "Number of valley offsets differ"
+    if trace_valleys:
+        gt_v = strip_duplicates(gt_dict["valleys"].cpu().numpy())
+        cp_v = strip_duplicates(computed_ms.valleys.cpu().numpy())
+        assert len(gt_v) == len(cp_v), "Total valley length differ"
+        assert len(gt_dict["valley_offsets"]) == len(computed_ms.valley_offsets), "Number of valley offsets differ"
 
     # 5. Check region equivalence (Peaks and Basins)
     def check_regions(gt_regions, comp_regions, name="Regions"):
@@ -95,8 +97,10 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
             gt_lbls = np.unique(gt_arr[mask])
             assert len(gt_lbls) == 1, f"Computed {name} label {lbl} is split into GT labels {gt_lbls}"
 
-    check_regions(gt_dict["peaks"], computed_ms.peaks, "Peaks")
-    check_regions(gt_dict["basins"], computed_ms.basins, "Basins")
+    if trace_peaks:
+        check_regions(gt_dict["peaks"], computed_ms.peaks, "Peaks")
+    if trace_basins:
+        check_regions(gt_dict["basins"], computed_ms.basins, "Basins")
 
 
 @pytest.mark.parametrize(
@@ -105,7 +109,11 @@ def assert_mscomplex_equivalence(gt_dict, computed_ms):
 )
 @pytest.mark.parametrize("is_dual", [False, True])
 @pytest.mark.parametrize("is_filtered, threshold", [(False, -1.0), (True, 0.15)])
-def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filtered, threshold):
+@pytest.mark.parametrize("trace_valleys", [True, False])
+@pytest.mark.parametrize("trace_ridges", [True, False])
+@pytest.mark.parametrize("trace_peaks", [True, False])
+@pytest.mark.parametrize("trace_basins", [True, False])
+def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filtered, threshold, trace_valleys, trace_ridges, trace_peaks, trace_basins):
     device = torch.device(device_str)
     # The extension will throw an error if the GPU device is missing on this platform
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -125,7 +133,17 @@ def test_dmsc_regression(landscape, mode, threads, device_str, is_dual, is_filte
     gt_dict = torch.load(gt_path, weights_only=False)
 
     # Compute MS complex
-    ms = compute_dmsc(img, threshold, return_gradient=not is_filtered, is_dual=is_dual, block_size=32)
+    ms = compute_dmsc(
+        img, 
+        threshold, 
+        return_gradient=not is_filtered, 
+        is_dual=is_dual, 
+        block_size=32,
+        trace_valleys=trace_valleys,
+        trace_ridges=trace_ridges,
+        trace_peaks=trace_peaks,
+        trace_basins=trace_basins
+    )
 
     # Validate Equivalence
-    assert_mscomplex_equivalence(gt_dict, ms)
+    assert_mscomplex_equivalence(gt_dict, ms, trace_valleys, trace_ridges, trace_peaks, trace_basins)

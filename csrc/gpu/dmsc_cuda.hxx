@@ -36,7 +36,7 @@ gpu::TracedSaddlesTensors launch_trace_from_saddles_cuda(torch::Tensor& active_f
 void launch_trace_raw_arcs_geometry_cuda(const int* d_paired_with, const int* d_fast_crit_map,
                                          const int* d_crit_saddles, const int* d_max_offsets, const int* d_min_offsets,
                                          int* d_flat_max, int* d_flat_min, void* d_saddle_nodes, int H, int W, int Nx,
-                                         int num_saddles);
+                                         int num_saddles, bool trace_max_arcs, bool trace_min_arcs);
 
 void launch_simplify_arcs_cuda(torch::Tensor d_cancels, torch::Tensor d_init_t, torch::Tensor d_parent_ptrs,
                                torch::Tensor d_weights, torch::Tensor d_dag, torch::Tensor d_base_lens,
@@ -91,7 +91,7 @@ void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
 }
 
 template <bool IS_DUAL = false, typename Workspace>
-void compute_cell_groups(Workspace& ws) {
+void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_vertex_groups) {
   RECORD_FUNCTION("cell_groups_gpu", {});
   const auto& gdata = ws.gradient_data;
   int H = ws.H;
@@ -161,14 +161,14 @@ void compute_cell_groups(Workspace& ws) {
   torch::Tensor d_out_face_groups = ws.cell_groups.face_groups.request_full({H + 1, W + 1}, i_opts, -2);
   torch::Tensor d_out_vertex_groups = ws.cell_groups.vertex_groups.request_full({H, W}, i_opts, -2);
   torch::Tensor d_paired_with = gdata.d_paired_with.get();
-  {
+  if (trace_face_groups) {
     RECORD_FUNCTION("trace_faces", {});
     launch_cell_groups_cuda(ws.d_data.template data_ptr<float>(), d_paired_with.data_ptr<int>(),
                             d_fast_crit_map.data_ptr<int>(), d_uf_max_parent.data_ptr<int>(),
                             d_crit_maxes.data_ptr<int>(), d_fast_region.data_ptr<int>(),
                             d_out_face_groups.data_ptr<int>(), H, W, Nx, IS_DUAL, /*trace_faces=*/true);
   }
-  {
+  if (trace_vertex_groups) {
     RECORD_FUNCTION("trace_vertices", {});
     launch_cell_groups_cuda(ws.d_data.template data_ptr<float>(), d_paired_with.data_ptr<int>(),
                             d_fast_crit_map.data_ptr<int>(), d_uf_min_parent.data_ptr<int>(),
@@ -192,7 +192,7 @@ void trace_from_saddles(Workspace& ws) {
 }
 
 template <typename Workspace>
-void trace_raw_arcs_geometry(Workspace& ws) {
+void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_arcs) {
   RECORD_FUNCTION("trace_raw_arcs_geometry_gpu", {});
   int H = ws.H;
   int W = ws.W;
@@ -242,8 +242,10 @@ void trace_raw_arcs_geometry(Workspace& ws) {
     // Extract raw pointers and dispatch to standard CUDA kernel
     launch_trace_raw_arcs_geometry_cuda(
         d_paired_with.data_ptr<int>(), d_fast_crit_map.data_ptr<int>(), d_saddles.data_ptr<int>(),
-        d_max_offsets.data_ptr<int>(), d_min_offsets.data_ptr<int>(), d_flat_max.data_ptr<int>(),
-        d_flat_min.data_ptr<int>(), d_saddle_nodes.data_ptr<uint8_t>(), H, W, Nx, num_saddles);
+        d_max_offsets.data_ptr<int>(), d_min_offsets.data_ptr<int>(), 
+        trace_max_arcs ? d_flat_max.data_ptr<int>() : nullptr,
+        trace_min_arcs ? d_flat_min.data_ptr<int>() : nullptr, d_saddle_nodes.data_ptr<uint8_t>(), H, W, Nx, num_saddles,
+        trace_max_arcs, trace_min_arcs);
   }
 
   // out.flat_max_geom = d_flat_max.cpu();
@@ -255,7 +257,7 @@ void trace_raw_arcs_geometry(Workspace& ws) {
 }
 
 template <typename Workspace>
-void simplify_arcs_geometry(Workspace& ws) {
+void simplify_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_arcs) {
   RECORD_FUNCTION("simplify_arcs_geometry_cuda", {});
   auto& min_cancellations = ws.p_data.min_cancellations;
   auto& max_cancellations = ws.p_data.max_cancellations;
@@ -359,12 +361,16 @@ void simplify_arcs_geometry(Workspace& ws) {
   }
   {
     RECORD_FUNCTION("CUDA_Iterative_Contraction", {});
-    launch_simplify_arcs_cuda(d_max_cancels, d_max_init_t, d_max_parent, d_max_weights, d_max_dag, d_max_base_lens,
-                              d_max_alive, d_max_pending, num_max_cancels, num_crit_maxes, N2, &max_dag_sz,
-                              stream_max.stream());
-    launch_simplify_arcs_cuda(d_min_cancels, d_min_init_t, d_min_parent, d_min_weights, d_min_dag, d_min_base_lens,
-                              d_min_alive, d_min_pending, num_min_cancels, num_crit_mins, N2, &min_dag_sz,
-                              stream_min.stream());
+    if (trace_max_arcs) {
+      launch_simplify_arcs_cuda(d_max_cancels, d_max_init_t, d_max_parent, d_max_weights, d_max_dag, d_max_base_lens,
+                                d_max_alive, d_max_pending, num_max_cancels, num_crit_maxes, N2, &max_dag_sz,
+                                stream_max.stream());
+    }
+    if (trace_min_arcs) {
+      launch_simplify_arcs_cuda(d_min_cancels, d_min_init_t, d_min_parent, d_min_weights, d_min_dag, d_min_base_lens,
+                                d_min_alive, d_min_pending, num_min_cancels, num_crit_mins, N2, &min_dag_sz,
+                                stream_min.stream());
+    }
   }
   stream_max.synchronize();
   stream_min.synchronize();

@@ -26,7 +26,7 @@
 namespace cpu {
 
 template <bool IS_DUAL, typename Workspace>
-void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, bool trace_arcs) {
+void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, bool trace_max_arcs, bool trace_min_arcs) {
   RECORD_FUNCTION("persistence_cpu", {});
   auto& fast_crit_map = ws.hlp.fast_crit_map;
   auto& sorted_min_saddles = ws.arcs_topology.sorted_min_saddles;
@@ -48,7 +48,7 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
   max_alive.assign(crit_maxes.size(), true);
   uf_min.reset(crit_mins.size());
   uf_max.reset(crit_maxes.size());
-  if (trace_arcs) {
+  if (trace_max_arcs || trace_min_arcs) {
     min_cancellations.clear();
     max_cancellations.clear();
     safe_crit_map.assign(fast_crit_map.begin(), fast_crit_map.end());
@@ -103,7 +103,7 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
             if (dying_g == r2_g) std::swap(dying, survivor);
             uf_min.unite_from_root(dying, survivor);
 
-            if (trace_arcs) {
+            if (trace_min_arcs) {
               int s_idx = safe_crit_map[ev.saddle_id];
               min_cancellations.push_back(
                   {ev.saddle_id, s_idx, crit_mins[dying], dying, ev.persistence, /*is_max=*/false});
@@ -160,7 +160,7 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
             if (dying_g == r2_g) std::swap(dying, survivor);
             uf_max.unite_from_root(dying, survivor);
 
-            if (trace_arcs) {
+            if (trace_max_arcs) {
               int s_idx = safe_crit_map[ev.saddle_id];
               max_cancellations.push_back(
                   {ev.saddle_id, s_idx, crit_maxes[dying], dying, ev.persistence, /*is_max=*/true});

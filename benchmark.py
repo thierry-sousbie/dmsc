@@ -141,7 +141,7 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
 
 
 def run_all_benchmarks(
-    enable_profiler=False, test_cpu=True, test_gpu=True, trace_arcs=True, trace_manifolds=True, test_batches=True
+    enable_profiler=False, test_cpu=True, test_gpu=True, trace_valleys=True, trace_ridges=True, trace_peaks=True, trace_basins=True, test_batches=True
 ):
 
     H, W = 2048, 2048
@@ -181,8 +181,10 @@ def run_all_benchmarks(
                 num_runs=2,
                 run_profiler=enable_profiler,
                 block_size=128,
-                trace_arcs=trace_arcs,
-                trace_manifolds=trace_manifolds,
+                trace_valleys=trace_valleys,
+                trace_ridges=trace_ridges,
+                trace_peaks=trace_peaks,
+                trace_basins=trace_basins,
             )
 
             # 2. CPU Max Threads (Sequential)
@@ -195,8 +197,10 @@ def run_all_benchmarks(
                 num_runs=10,
                 run_profiler=enable_profiler,
                 block_size=128,
-                trace_arcs=trace_arcs,
-                trace_manifolds=trace_manifolds,
+                trace_valleys=trace_valleys,
+                trace_ridges=trace_ridges,
+                trace_peaks=trace_peaks,
+                trace_basins=trace_basins,
             )
 
             # 3. CPU Max Threads (Batched)
@@ -210,8 +214,10 @@ def run_all_benchmarks(
                     run_profiler=enable_profiler,
                     block_size=128,
                     is_batched=True,
-                    trace_arcs=trace_arcs,
-                    trace_manifolds=trace_manifolds,
+                    trace_valleys=trace_valleys,
+                    trace_ridges=trace_ridges,
+                    trace_peaks=trace_peaks,
+                    trace_basins=trace_basins,
                 )
 
         # Hardware Accelerated (GPU)
@@ -227,8 +233,10 @@ def run_all_benchmarks(
                 num_runs=10,
                 run_profiler=enable_profiler,
                 block_size=128,
-                trace_arcs=trace_arcs,
-                trace_manifolds=trace_manifolds,
+                trace_valleys=trace_valleys,
+                trace_ridges=trace_ridges,
+                trace_peaks=trace_peaks,
+                trace_basins=trace_basins,
             )
 
             # 5. GPU (Batched)
@@ -242,8 +250,10 @@ def run_all_benchmarks(
                     run_profiler=enable_profiler,
                     block_size=128,
                     is_batched=True,
-                    trace_arcs=trace_arcs,
-                    trace_manifolds=trace_manifolds,
+                    trace_valleys=trace_valleys,
+                    trace_ridges=trace_ridges,
+                    trace_peaks=trace_peaks,
+                    trace_basins=trace_basins,
                 )
 
 

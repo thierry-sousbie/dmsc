@@ -615,7 +615,7 @@ def run_evaluation(img, H, W, extraction_fn, suffix, no_plots=False, seed=None, 
         )
 
 
-def test_dmsc(no_plots=False, with_loop=True, trace_arcs=True, trace_manifolds=True, seed=None):
+def test_dmsc(no_plots=False, with_loop=True, trace_valleys=True, trace_ridges=True, trace_peaks=True, trace_basins=True, seed=None):
     print(f"Default Threads: {torch.get_num_threads()}")
 
     H, W = 128, 128
@@ -639,8 +639,10 @@ def test_dmsc(no_plots=False, with_loop=True, trace_arcs=True, trace_manifolds=T
         "st",
         block_size=128,
         no_plots=no_plots,
-        trace_arcs=trace_arcs,
-        trace_manifolds=trace_manifolds,
+        trace_valleys=trace_valleys,
+        trace_ridges=trace_ridges,
+        trace_peaks=trace_peaks,
+        trace_basins=trace_basins,
         seed=seed,
     )
 
@@ -655,8 +657,10 @@ def test_dmsc(no_plots=False, with_loop=True, trace_arcs=True, trace_manifolds=T
         "mt",
         block_size=128,
         no_plots=no_plots,
-        trace_arcs=trace_arcs,
-        trace_manifolds=trace_manifolds,
+        trace_valleys=trace_valleys,
+        trace_ridges=trace_ridges,
+        trace_peaks=trace_peaks,
+        trace_basins=trace_basins,
         seed=seed,
     )
 
@@ -681,8 +685,10 @@ def test_dmsc(no_plots=False, with_loop=True, trace_arcs=True, trace_manifolds=T
         "gpu",
         block_size=32,
         no_plots=no_plots,
-        trace_arcs=trace_arcs,
-        trace_manifolds=trace_manifolds,
+        trace_valleys=trace_valleys,
+        trace_ridges=trace_ridges,
+        trace_peaks=trace_peaks,
+        trace_basins=trace_basins,
         seed=seed,
     )
 

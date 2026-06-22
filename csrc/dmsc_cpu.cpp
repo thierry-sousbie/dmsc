@@ -26,7 +26,8 @@ represent maxima/saddles/minima respectively.
 */
 template <bool IS_DUAL = false>
 DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persistence_threshold, int block_size,
-                                     bool return_gradient, bool trace_arcs, bool trace_manifolds, cpu::Workspace& ws) {
+                                     bool return_gradient, bool trace_max_arcs, bool trace_min_arcs,
+                                     bool trace_face_groups, bool trace_vertex_groups, cpu::Workspace& ws) {
   int H = ws.H;
   int W = ws.W;
   // int num_cells = ws.num_cells;
@@ -41,19 +42,21 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
   compute_gradient_and_crit_points<IS_DUAL>(ws, scalar_field, total_blocks, num_blocks_x, block_size);
   trace_from_saddles<IS_DUAL>(ws, scalar_field);
 
-  if (trace_arcs) trace_raw_arcs_geometry(ws);
+  bool trace_any_arcs = trace_max_arcs || trace_min_arcs;
+  if (trace_any_arcs) trace_raw_arcs_geometry(ws, trace_max_arcs, trace_min_arcs);
 
-  compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_arcs);
+  compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_max_arcs, trace_min_arcs);
 
-  if (trace_arcs) simplify_arcs_geometry(ws);
-  if (trace_manifolds) compute_cell_groups(ws);
+  if (trace_any_arcs) simplify_arcs_geometry(ws, trace_max_arcs, trace_min_arcs);
+  if (trace_face_groups || trace_vertex_groups) compute_cell_groups(ws, trace_face_groups, trace_vertex_groups);
 
-  return ws.complex<IS_DUAL>(return_gradient, trace_arcs);
+  return ws.complex<IS_DUAL>(return_gradient, trace_max_arcs, trace_min_arcs, trace_face_groups, trace_vertex_groups);
 }
 
 pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_threshold, int block_size = 128,
-                                  bool return_gradient = false, bool is_dual = false, bool trace_arcs = false,
-                                  bool trace_manifolds = false) {
+                                  bool return_gradient = false, bool is_dual = false, bool trace_max_arcs = false,
+                                  bool trace_min_arcs = false, bool trace_face_groups = false,
+                                  bool trace_vertex_groups = false) {
   TORCH_CHECK(scalar_field.dim() == 2 || scalar_field.dim() == 3, "Input tensor must be 2D [H, W] or 3D [B, H, W]");
 
   scalar_field = scalar_field.contiguous();
@@ -66,10 +69,10 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
     cpu::Workspace ws(H, W);
     if (is_dual) {
       result = extract_single_dmsc_cpu_t<true>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                               trace_arcs, trace_manifolds, ws);
+                                               trace_max_arcs, trace_min_arcs, trace_face_groups, trace_vertex_groups, ws);
     } else {
       result = extract_single_dmsc_cpu_t<false>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                                trace_arcs, trace_manifolds, ws);
+                                                trace_max_arcs, trace_min_arcs, trace_face_groups, trace_vertex_groups, ws);
     }
 
     return pybind11::cast(result);
@@ -87,10 +90,12 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
     for (int b = 0; b < B; ++b) {
       if (is_dual) {
         results.push_back(extract_single_dmsc_cpu_t<true>(scalar_field[b], persistence_threshold, block_size,
-                                                          return_gradient, trace_arcs, trace_manifolds, ws));
+                                                          return_gradient, trace_max_arcs, trace_min_arcs,
+                                                          trace_face_groups, trace_vertex_groups, ws));
       } else {
         results.push_back(extract_single_dmsc_cpu_t<false>(scalar_field[b], persistence_threshold, block_size,
-                                                           return_gradient, trace_arcs, trace_manifolds, ws));
+                                                           return_gradient, trace_max_arcs, trace_min_arcs,
+                                                           trace_face_groups, trace_vertex_groups, ws));
       }
     }
 
@@ -169,6 +174,7 @@ PYBIND11_MODULE(dmsc_cpu, m) {
   // Only one function exported now!
   m.def("extract_dmsc", &extract_dmsc_cpu, "Multithreaded Discrete Morse-Smale complex computation",
         pybind11::arg("scalar_field"), pybind11::arg("persistence_threshold"), pybind11::arg("block_size") = 128,
-        pybind11::arg("return_gradient") = false, pybind11::arg("is_dual") = false, pybind11::arg("trace_arcs") = false,
-        pybind11::arg("trace_manifolds") = false);
+        pybind11::arg("return_gradient") = false, pybind11::arg("is_dual") = false,
+        pybind11::arg("trace_max_arcs") = false, pybind11::arg("trace_min_arcs") = false,
+        pybind11::arg("trace_face_groups") = false, pybind11::arg("trace_vertex_groups") = false);
 }
