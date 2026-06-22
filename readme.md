@@ -142,5 +142,4 @@ Note that the image boundaries are made of faces and segments, which creates an 
 This project is in very early stage, but here are a few things I may add in the future:
 
 - Implementation of loss functions for topological segmentation
-- There is room for massive speed improvements on GPU, but the code needs to be refactored to avoid unnecessary data transfers and remaining entanglements between CPU and GPU versions.
 - Support for 3D (maybe later ...)
