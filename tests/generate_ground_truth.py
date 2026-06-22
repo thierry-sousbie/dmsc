@@ -29,10 +29,10 @@ def save_ground_truth():
             dual_str = "dual" if is_dual else "primal"
 
             # Raw
-            ms_raw = compute_dmsc(img_dev, -1.0, return_gradient=True, is_dual=is_dual, block_size=32)
+            ms_raw = compute_dmsc(img_dev, -1.0, return_gradient=True, is_dual=is_dual)
 
             # Simplified
-            ms_flt = compute_dmsc(img_dev, 0.15, return_gradient=True, is_dual=is_dual, block_size=32)
+            ms_flt = compute_dmsc(img_dev, 0.15, return_gradient=True, is_dual=is_dual)
 
             # Extract attributes to dict to save
             def ms_to_dict(ms):

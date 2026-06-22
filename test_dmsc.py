@@ -155,9 +155,9 @@ def plot_complex_layer(
             shuffled_vals = np.random.permutation(unique_vals)
             colored_regions = shuffled_vals[ids_map].reshape(regions.shape)
             masked_regions = np.ma.masked_where(regions == -1, colored_regions)
-            num_missing = np.sum(regions == -1)
-            if num_missing > 0:
-                print(f"Number of unassigned (-1) pixels in dual regions: {num_missing}")
+            # num_missing = np.sum(regions == -1)
+            # if num_missing > 0:
+            #     print(f"Number of unassigned (-1) pixels in dual regions: {num_missing}")
             ax.imshow(masked_regions, cmap="tab20", origin="lower", extent=my_extent, interpolation="nearest", zorder=1)
         else:
             ax.set_facecolor("white")
@@ -461,12 +461,11 @@ def run_evaluation(img, H, W, extraction_fn, suffix, no_plots=False, seed=None, 
     """Runs the entire pipeline for a given extraction function and saves the plots."""
     print(f"\n--- RUNNING EVALUATION: {suffix.upper()} ---")
 
-    print("Extracting full Morse complex (Before Simplification, threshold=-1.0)...")
+    print("Testing Primal Execution Mode (is_dual=False)...")
     ms_raw = extraction_fn(img, -1.0, return_gradient=True, **kwargs)
-    print(ms_raw)
-    print("Applying persistence simplification (threshold=0.25)...")
+    # print(ms_raw)
     ms_flt = extraction_fn(img, 0.15, **kwargs)
-    print(ms_flt)
+    # print(ms_flt)
 
     if not no_plots:
         create_dashboard(
@@ -477,7 +476,10 @@ def run_evaluation(img, H, W, extraction_fn, suffix, no_plots=False, seed=None, 
     ms_raw_min = extraction_fn(img, -1.0, return_gradient=True, is_dual=True, **kwargs)
     ms_flt_min = extraction_fn(img, 0.15, return_gradient=False, is_dual=True, **kwargs)
 
-
+    if not no_plots:
+        create_dashboard(
+            f"visualizations/dmsc_dashboard_dual_{suffix}.png", img.cpu(), H, W, ms_raw_min, ms_flt_min, seed=seed
+        )
 
 
 def test_dmsc(
@@ -488,21 +490,17 @@ def test_dmsc(
     trace_peaks=True,
     trace_basins=True,
     seed=None,
+    resolution=32,
 ):
     print(f"Default Threads: {torch.get_num_threads()}")
 
-    H, W = 128, 128
-    H, W = 64, 64
-    H, W = 32, 32
-    # H, W = 16, 16
-    if H > 128:
-        no_plots = True
+    H, W = (resolution, resolution)
 
     print("Generating noisy landscape...")
     img = generate_noisy_landscape(H, W, with_loop=with_loop)
 
     # Run Multi-Threaded Evaluation (1 core)
-    print("\nRunning Multi-Threaded (1 core)...")
+    # print("\nRunning Multi-Threaded (1 core)...")
     torch.set_num_threads(1)
     run_evaluation(
         img,
@@ -510,7 +508,6 @@ def test_dmsc(
         W,
         compute_dmsc,
         "st",
-        block_size=128,
         no_plots=no_plots,
         trace_valleys=trace_valleys,
         trace_ridges=trace_ridges,
@@ -520,7 +517,7 @@ def test_dmsc(
     )
 
     max_threads = multiprocessing.cpu_count()
-    print(f"\nRunning Multi-Threaded ({max_threads} cores)...")
+    # print(f"\nRunning Multi-Threaded ({max_threads} cores)...")
     torch.set_num_threads(max_threads)
     run_evaluation(
         img,
@@ -528,7 +525,6 @@ def test_dmsc(
         W,
         compute_dmsc,
         "mt",
-        block_size=128,
         no_plots=no_plots,
         trace_valleys=trace_valleys,
         trace_ridges=trace_ridges,
@@ -538,7 +534,7 @@ def test_dmsc(
     )
 
     max_threads = multiprocessing.cpu_count()
-    print(f"\nRunning GPU Multi-Threaded({max_threads} cores)...")
+    # print(f"\nRunning GPU Multi-Threaded({max_threads} cores)...")
     torch.set_num_threads(max_threads)
     if torch.backends.mps.is_available():
         device = torch.device("mps")
@@ -546,7 +542,7 @@ def test_dmsc(
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-    print(f"Using device: {device}")
+    # print(f"Using device: {device}")
 
     img = img.to(device)
 
@@ -556,7 +552,6 @@ def test_dmsc(
         W,
         compute_dmsc,
         "gpu",
-        block_size=32,
         no_plots=no_plots,
         trace_valleys=trace_valleys,
         trace_ridges=trace_ridges,
@@ -582,6 +577,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no-basins", action="store_false", dest="trace_basins", default=True, help="Disable tracing basins"
     )
+    parser.add_argument("--resolution", type=int, default=32, help="Image resolution")
     args = parser.parse_args()
 
     # Determine seed: use provided or generate a unique one based on time
@@ -599,4 +595,5 @@ if __name__ == "__main__":
         trace_ridges=args.trace_ridges,
         trace_peaks=args.trace_peaks,
         trace_basins=args.trace_basins,
+        resolution=args.resolution,
     )

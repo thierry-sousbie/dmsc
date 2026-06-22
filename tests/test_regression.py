@@ -163,7 +163,6 @@ def test_dmsc_regression(
         threshold,
         return_gradient=not is_filtered,
         is_dual=is_dual,
-        block_size=32,
         trace_valleys=trace_valleys,
         trace_ridges=trace_ridges,
         trace_peaks=trace_peaks,

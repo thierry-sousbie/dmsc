@@ -25,9 +25,9 @@ compute the dual complex with the role of vertices/edges/faces reversed, i.e. th
 represent maxima/saddles/minima respectively.
 */
 template <bool IS_DUAL = false>
-DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persistence_threshold, int block_size,
-                                     bool return_gradient, bool trace_max_arcs, bool trace_min_arcs,
-                                     bool trace_max_groups, bool trace_min_groups, cpu::Workspace& ws) {
+DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient,
+                                     bool trace_max_arcs, bool trace_min_arcs, bool trace_max_groups,
+                                     bool trace_min_groups, cpu::Workspace& ws) {
   int H = ws.H;
   int W = ws.W;
   // int num_cells = ws.num_cells;
@@ -38,11 +38,8 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
     std::swap(trace_max_arcs, trace_min_arcs);
     std::swap(trace_max_groups, trace_min_groups);
   }
-  int num_blocks_y = (H + block_size - 1) / block_size;
-  int num_blocks_x = (W + block_size - 1) / block_size;
-  int total_blocks = num_blocks_y * num_blocks_x;
 
-  compute_gradient_and_crit_points<IS_DUAL>(ws, scalar_field, total_blocks, num_blocks_x, block_size);
+  compute_gradient_and_crit_points<IS_DUAL>(ws, scalar_field);
   trace_from_saddles<IS_DUAL>(ws, scalar_field);
 
   bool trace_any_arcs = trace_max_arcs || trace_min_arcs;
@@ -56,10 +53,9 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
   return ws.complex<IS_DUAL>(return_gradient, trace_max_arcs, trace_min_arcs, trace_max_groups, trace_min_groups);
 }
 
-pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_threshold, int block_size = 128,
-                                  bool return_gradient = false, bool is_dual = false, bool trace_max_arcs = false,
-                                  bool trace_min_arcs = false, bool trace_max_groups = false,
-                                  bool trace_min_groups = false) {
+pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient = false,
+                                  bool is_dual = false, bool trace_max_arcs = false, bool trace_min_arcs = false,
+                                  bool trace_max_groups = false, bool trace_min_groups = false) {
   TORCH_CHECK(scalar_field.dim() == 2 || scalar_field.dim() == 3, "Input tensor must be 2D [H, W] or 3D [B, H, W]");
 
   scalar_field = scalar_field.contiguous();
@@ -71,11 +67,11 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
     DMSComplex result;
     cpu::Workspace ws(H, W);
     if (is_dual) {
-      result = extract_single_dmsc_cpu_t<true>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                               trace_max_arcs, trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+      result = extract_single_dmsc_cpu_t<true>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                               trace_min_arcs, trace_max_groups, trace_min_groups, ws);
     } else {
-      result = extract_single_dmsc_cpu_t<false>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                                trace_max_arcs, trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+      result = extract_single_dmsc_cpu_t<false>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                                trace_min_arcs, trace_max_groups, trace_min_groups, ws);
     }
 
     return pybind11::cast(result);
@@ -92,13 +88,13 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
 
     for (int b = 0; b < B; ++b) {
       if (is_dual) {
-        results.push_back(extract_single_dmsc_cpu_t<true>(scalar_field[b], persistence_threshold, block_size,
-                                                          return_gradient, trace_max_arcs, trace_min_arcs,
-                                                          trace_max_groups, trace_min_groups, ws));
+        results.push_back(extract_single_dmsc_cpu_t<true>(scalar_field[b], persistence_threshold, return_gradient,
+                                                          trace_max_arcs, trace_min_arcs, trace_max_groups,
+                                                          trace_min_groups, ws));
       } else {
-        results.push_back(extract_single_dmsc_cpu_t<false>(scalar_field[b], persistence_threshold, block_size,
-                                                           return_gradient, trace_max_arcs, trace_min_arcs,
-                                                           trace_max_groups, trace_min_groups, ws));
+        results.push_back(extract_single_dmsc_cpu_t<false>(scalar_field[b], persistence_threshold, return_gradient,
+                                                           trace_max_arcs, trace_min_arcs, trace_max_groups,
+                                                           trace_min_groups, ws));
       }
     }
 
@@ -176,8 +172,8 @@ PYBIND11_MODULE(dmsc_cpu, m) {
 
   // Only one function exported now!
   m.def("extract_dmsc", &extract_dmsc_cpu, "Multithreaded Discrete Morse-Smale complex computation",
-        pybind11::arg("scalar_field"), pybind11::arg("persistence_threshold"), pybind11::arg("block_size") = 128,
-        pybind11::arg("return_gradient") = false, pybind11::arg("is_dual") = false,
-        pybind11::arg("trace_max_arcs") = false, pybind11::arg("trace_min_arcs") = false,
-        pybind11::arg("trace_max_groups") = false, pybind11::arg("trace_min_groups") = false);
+        pybind11::arg("scalar_field"), pybind11::arg("persistence_threshold"), pybind11::arg("return_gradient") = false,
+        pybind11::arg("is_dual") = false, pybind11::arg("trace_max_arcs") = false,
+        pybind11::arg("trace_min_arcs") = false, pybind11::arg("trace_max_groups") = false,
+        pybind11::arg("trace_min_groups") = false);
 }

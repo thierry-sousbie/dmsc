@@ -23,9 +23,9 @@ direction. At the end, we swap minima and maxima, so we compute the dual complex
 vertices/edges/faces reversed, i.e. they represent maxima/saddles/minima respectively.
 */
 template <bool IS_DUAL = false>
-DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persistence_threshold, int block_size,
-                                     bool return_gradient, bool trace_max_arcs, bool trace_min_arcs,
-                                     bool trace_max_groups, bool trace_min_groups, gpu::Workspace& ws) {
+DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient,
+                                     bool trace_max_arcs, bool trace_min_arcs, bool trace_max_groups,
+                                     bool trace_min_groups, gpu::Workspace& ws) {
   if (scalar_field.device().is_cuda()) {
 #ifdef __APPLE__
     throw std::runtime_error("Extension was not compiled with CUDA support.");
@@ -62,10 +62,9 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
   return ws.complex<IS_DUAL>(return_gradient, trace_max_arcs, trace_min_arcs, trace_max_groups, trace_min_groups);
 }
 
-pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_threshold, int block_size = 128,
-                                  bool return_gradient = false, bool is_dual = false, bool trace_max_arcs = false,
-                                  bool trace_min_arcs = false, bool trace_max_groups = false,
-                                  bool trace_min_groups = false) {
+pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient = false,
+                                  bool is_dual = false, bool trace_max_arcs = false, bool trace_min_arcs = false,
+                                  bool trace_max_groups = false, bool trace_min_groups = false) {
   TORCH_CHECK(scalar_field.dim() == 2 || scalar_field.dim() == 3, "Input tensor must be 2D [H, W] or 3D [B, H, W]");
 
   scalar_field = scalar_field.contiguous();
@@ -77,11 +76,11 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
     DMSComplex result;
     gpu::Workspace ws(H, W);
     if (is_dual) {
-      result = extract_single_dmsc_gpu_t<true>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                               trace_max_arcs, trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+      result = extract_single_dmsc_gpu_t<true>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                               trace_min_arcs, trace_max_groups, trace_min_groups, ws);
     } else {
-      result = extract_single_dmsc_gpu_t<false>(scalar_field, persistence_threshold, block_size, return_gradient,
-                                                trace_max_arcs, trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+      result = extract_single_dmsc_gpu_t<false>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                                trace_min_arcs, trace_max_groups, trace_min_groups, ws);
     }
     // Cast the single struct to a generic Python object
     return pybind11::cast(result);
@@ -100,13 +99,11 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
       torch::Tensor img = scalar_field[b];  // Shallow slice wrapper
 
       if (is_dual) {
-        results.push_back(extract_single_dmsc_gpu_t<true>(img, persistence_threshold, block_size, return_gradient,
-                                                          trace_max_arcs, trace_min_arcs, trace_max_groups,
-                                                          trace_min_groups, ws));
+        results.push_back(extract_single_dmsc_gpu_t<true>(img, persistence_threshold, return_gradient, trace_max_arcs,
+                                                          trace_min_arcs, trace_max_groups, trace_min_groups, ws));
       } else {
-        results.push_back(extract_single_dmsc_gpu_t<false>(img, persistence_threshold, block_size, return_gradient,
-                                                           trace_max_arcs, trace_min_arcs, trace_max_groups,
-                                                           trace_min_groups, ws));
+        results.push_back(extract_single_dmsc_gpu_t<false>(img, persistence_threshold, return_gradient, trace_max_arcs,
+                                                           trace_min_arcs, trace_max_groups, trace_min_groups, ws));
       }
     }
 
@@ -185,8 +182,8 @@ PYBIND11_MODULE(dmsc_gpu, m) {
 
   // Only one function exported now!
   m.def("extract_dmsc", &extract_dmsc_gpu, "GPU based Discrete Morse-Smale complex computation",
-        pybind11::arg("scalar_field"), pybind11::arg("persistence_threshold"), pybind11::arg("block_size") = 128,
-        pybind11::arg("return_gradient") = false, pybind11::arg("is_dual") = false,
-        pybind11::arg("trace_max_arcs") = false, pybind11::arg("trace_min_arcs") = false,
-        pybind11::arg("trace_max_groups") = false, pybind11::arg("trace_min_groups") = false);
+        pybind11::arg("scalar_field"), pybind11::arg("persistence_threshold"), pybind11::arg("return_gradient") = false,
+        pybind11::arg("is_dual") = false, pybind11::arg("trace_max_arcs") = false,
+        pybind11::arg("trace_min_arcs") = false, pybind11::arg("trace_max_groups") = false,
+        pybind11::arg("trace_min_groups") = false);
 }

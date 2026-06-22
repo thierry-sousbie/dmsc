@@ -162,7 +162,6 @@ class MSComplex:
 def extract_full_complex(
     img,
     persistence_threshold,
-    block_size,
     return_gradient,
     is_dual,
     trace_max_arcs,
@@ -174,7 +173,6 @@ def extract_full_complex(
         return dmsc_gpu.extract_dmsc(
             img,
             persistence_threshold,
-            block_size,
             return_gradient,
             is_dual,
             trace_max_arcs,
@@ -186,7 +184,6 @@ def extract_full_complex(
         return dmsc_cpu.extract_dmsc(
             img,
             persistence_threshold,
-            block_size,
             return_gradient,
             is_dual,
             trace_max_arcs,
@@ -199,7 +196,6 @@ def extract_full_complex(
 def compute_dmsc(
     img,
     persistence_threshold,
-    block_size=32,
     return_gradient=True,
     is_dual=False,
     trace_valleys=True,
@@ -216,12 +212,10 @@ def compute_dmsc(
         raise ValueError(f"Input tensor must be 2D [H, W] or 3D [B, H, W]. Got {img.dim()}D.")
 
     start_time = time.perf_counter()
-
     # The C++ unified API automatically handles both single and batched layouts
     output = extract_full_complex(
         img,
         persistence_threshold,
-        block_size,
         return_gradient,
         is_dual,
         trace_max_arcs=trace_ridges,
