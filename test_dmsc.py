@@ -139,16 +139,22 @@ def plot_dmsc_complex(
         else:
             my_extent = [-1.0, W, -1.0, H]
             off_x, off_y = 0.0, 0.0
+    else:
+        my_extent = [-0.5, W - 0.5, -0.5, H - 0.5]
+        off_x, off_y = 0.5, 0.5
 
     # 1. Plot Background (Regions or Raw Image)
-    if plot_regions and regions is not None:
-        unique_vals, ids_map = np.unique(regions, return_inverse=True)
-        shuffled_vals = np.random.permutation(unique_vals)
-        colored_regions = shuffled_vals[ids_map].reshape(regions.shape)
-        masked_regions = np.ma.masked_where(regions == -1, colored_regions)
-        ax.imshow(masked_regions, cmap="tab20", origin="lower", extent=my_extent, interpolation="nearest", zorder=1)
+    if plot_regions:
+        if regions is not None:
+            unique_vals, ids_map = np.unique(regions, return_inverse=True)
+            shuffled_vals = np.random.permutation(unique_vals)
+            colored_regions = shuffled_vals[ids_map].reshape(regions.shape)
+            masked_regions = np.ma.masked_where(regions == -1, colored_regions)
+            ax.imshow(masked_regions, cmap="tab20", origin="lower", extent=my_extent, interpolation="nearest", zorder=1)
+        else:
+            ax.set_facecolor("white")
     else:
-        ax.imshow(img.cpu().numpy(), cmap="viridis", origin="lower", zorder=0)
+        ax.imshow(img.cpu().numpy(), cmap="viridis", origin="lower", extent=[-0.5, W - 0.5, -0.5, H - 0.5], zorder=0)
 
     # 2. Plot Region Boundaries (Watershed lines)
     if plot_boundaries and regions is not None:
@@ -305,37 +311,38 @@ def plot_dmsc_complex(
 def plot_basin_regions(img, ms_complex, ax, title, plot_regions=True, plot_boundaries=True, plot_edges=False):
     """Plots the basin manifolds correctly staggered by half a pixel."""
 
-    if ms_complex.basins is None or ms_complex.basins.numel() == 0:
-        ax.set_title(f"{title}\n(Not Computed)")
-        ax.axis("off")
-        return
-
-    basins = ms_complex.basins.cpu().numpy()
+    basins = ms_complex.basins.cpu().numpy() if ms_complex.basins is not None and ms_complex.basins.numel() > 0 else None
 
     H, W = img.shape
-    rH, rW = basins.shape
-
-    if rH == H and rW == W:
+    if basins is not None:
+        rH, rW = basins.shape
+        if rH == H and rW == W:
+            my_extent = [-0.5, W - 0.5, -0.5, H - 0.5]
+            off_x, off_y = 0.5, 0.5
+        else:
+            my_extent = [-1.0, W, -1.0, H]
+            off_x, off_y = 0.0, 0.0
+    else:
         my_extent = [-0.5, W - 0.5, -0.5, H - 0.5]
         off_x, off_y = 0.5, 0.5
-    else:
-        my_extent = [-1.0, W, -1.0, H]
-        off_x, off_y = 0.0, 0.0
 
     if plot_regions:
-        unique_vals, ids_map = np.unique(basins, return_inverse=True)
-        shuffled_vals = np.random.permutation(unique_vals)
-        colored_regions = shuffled_vals[ids_map].reshape(basins.shape)
-        masked_regions = np.ma.masked_where(basins == -1, colored_regions)
-        num_missing = np.sum(basins == -1)
-        if num_missing > 0:
-            print(f"Number of unassigned (-1) pixels in dual regions: {num_missing}")
+        if basins is not None:
+            unique_vals, ids_map = np.unique(basins, return_inverse=True)
+            shuffled_vals = np.random.permutation(unique_vals)
+            colored_regions = shuffled_vals[ids_map].reshape(basins.shape)
+            masked_regions = np.ma.masked_where(basins == -1, colored_regions)
+            num_missing = np.sum(basins == -1)
+            if num_missing > 0:
+                print(f"Number of unassigned (-1) pixels in dual regions: {num_missing}")
 
-        ax.imshow(masked_regions, cmap="tab20", origin="lower", extent=my_extent, interpolation="nearest", zorder=1)
+            ax.imshow(masked_regions, cmap="tab20", origin="lower", extent=my_extent, interpolation="nearest", zorder=1)
+        else:
+            ax.set_facecolor("white")
     else:
-        ax.imshow(img.cpu().numpy(), cmap="viridis", origin="lower", zorder=0)
+        ax.imshow(img.cpu().numpy(), cmap="viridis", origin="lower", extent=[-0.5, W - 0.5, -0.5, H - 0.5], zorder=0)
 
-    if plot_boundaries:
+    if plot_boundaries and basins is not None:
         segs = []
 
         diff_x = basins[:, :-1] != basins[:, 1:]
