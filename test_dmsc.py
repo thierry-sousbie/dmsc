@@ -11,7 +11,7 @@ matplotlib.use("Agg")  # Use Agg for non-interactive plotting
 import matplotlib.collections as mcoll
 import matplotlib.pyplot as plt
 
-from csrc.dmsc import compute_dmsc
+from dmsc import compute_dmsc
 
 
 def generate_noisy_landscape(H=20, W=20, with_loop=False):

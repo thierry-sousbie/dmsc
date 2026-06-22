@@ -9,7 +9,7 @@ from contextlib import contextmanager
 import torch
 from torch.profiler import ProfilerActivity, profile, record_function
 
-from csrc.dmsc import compute_dmsc
+from dmsc import compute_dmsc
 
 try:
     libc = ctypes.CDLL(None)
