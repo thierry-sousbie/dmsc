@@ -71,11 +71,8 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
     warmup_end = time.perf_counter()
     warmup_ms = (warmup_end - warmup_start) * 1000
 
-    # expand the tensor if testing batch parallelism
-    if is_batched:
-        test_tensor = img_tensor.unsqueeze(0).expand(num_runs, -1, -1).contiguous()
-    else:
-        test_tensor = img_tensor
+    # Always expand to physically separate blocks to prevent L2 cache cheating
+    test_tensor = img_tensor.unsqueeze(0).expand(num_runs, -1, -1).contiguous()
 
     times_ms = []
     total_crit_pts = 0
@@ -98,11 +95,12 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
         for res in res_list:
             total_crit_pts += len(res.max_pts) + len(res.min_pts) + len(res.sad_pts)
     else:
-        # Standard sequential runs
-        for _ in range(num_runs):
+        # Standard sequential runs - explicitly prevent memory recycling to ensure fair comparison
+        res_list = []
+        for i in range(num_runs):
             start = time.perf_counter()
             with suppress_c_stdout():
-                res = func(test_tensor, threshold, **kwargs)
+                res = func(test_tensor[i], threshold, **kwargs)
                 if img_tensor.device.type == "cuda":
                     torch.cuda.synchronize()
                 elif img_tensor.device.type == "mps":
@@ -110,6 +108,7 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
             end = time.perf_counter()
 
             times_ms.append((end - start) * 1000)
+            res_list.append(res)  # Keep it alive to prevent caching allocator recycling
             total_crit_pts += len(res.max_pts) + len(res.min_pts) + len(res.sad_pts)
 
     # 3. Stats Output
