@@ -1,9 +1,9 @@
 import time
 from dataclasses import astuple, dataclass, fields
 
-import dmsc_cpu
-import dmsc_gpu
 import torch
+
+from .csrc import dmsc_cpu, dmsc_gpu
 
 
 @dataclass

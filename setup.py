@@ -15,9 +15,9 @@ tbb_lib = None
 
 def generate_metal_headers():
     """Converts raw .metal files into C++ string headers for compilation."""
-    metal_files = glob.glob("csrc/gpu/metal/*.metal")
+    metal_files = glob.glob("dmsc/csrc/gpu/metal/*.metal")
     if not metal_files:
-        print("[SETUP] No .metal files found in csrc/gpu/metal/")
+        print("[SETUP] No .metal files found in dmsc/csrc/gpu/metal/")
         return
 
     for metal_src_path in metal_files:
@@ -72,10 +72,10 @@ if sys.platform == "darwin":
     generate_metal_headers()
 
     gpu_ext = CppExtension(
-        name="dmsc_gpu",
+        name="dmsc.csrc.dmsc_gpu",
         sources=[
-            "csrc/dmsc_gpu.cpp",
-            "csrc/gpu/metal/metal_backend.mm",  # Objective-C++ bridge
+            "dmsc/csrc/dmsc_gpu.cpp",
+            "dmsc/csrc/gpu/metal/metal_backend.mm",  # Objective-C++ bridge
         ],
         extra_compile_args=gpu_compile_args,
         extra_link_args=gpu_link_args,  # Uses the new GPU link args
@@ -96,15 +96,15 @@ else:
         os.environ["TORCH_CUDA_ARCH_LIST"] = "7.5;8.0;8.6;8.9;9.0"
 
     gpu_ext = CUDAExtension(
-        name="dmsc_gpu",
+        name="dmsc.csrc.dmsc_gpu",
         sources=[
-            "csrc/dmsc_gpu.cpp",
-            "csrc/gpu/cuda/cell_groups.cu",
-            "csrc/gpu/cuda/critical_points.cu",
-            "csrc/gpu/cuda/gradient.cu",
-            "csrc/gpu/cuda/trace_from_saddles.cu",
-            "csrc/gpu/cuda/arcs_simplification.cu",
-            "csrc/gpu/cuda/trace_raw_arcs_geometry.cu",
+            "dmsc/csrc/dmsc_gpu.cpp",
+            "dmsc/csrc/gpu/cuda/cell_groups.cu",
+            "dmsc/csrc/gpu/cuda/critical_points.cu",
+            "dmsc/csrc/gpu/cuda/gradient.cu",
+            "dmsc/csrc/gpu/cuda/trace_from_saddles.cu",
+            "dmsc/csrc/gpu/cuda/arcs_simplification.cu",
+            "dmsc/csrc/gpu/cuda/trace_raw_arcs_geometry.cu",
         ],
         extra_compile_args={"cxx": cpu_compile_args, "nvcc": ["-O3", "-lineinfo"]},
         # extra_compile_args={"cxx": cpu_compile_args, "nvcc": ["-G", "-lineinfo"]},
@@ -115,8 +115,8 @@ else:
 
 ext_modules = [
     CppExtension(
-        name="dmsc_cpu",
-        sources=["csrc/dmsc_cpu.cpp"],
+        name="dmsc.csrc.dmsc_cpu",
+        sources=["dmsc/csrc/dmsc_cpu.cpp"],
         extra_compile_args=cpu_compile_args,
         extra_link_args=cpu_link_args,  # <--- Added here
         include_dirs=[tbb_include],
@@ -131,8 +131,7 @@ if gpu_ext is not None and not no_gpu:
 setup(
     name="dmsc",
     version="0.1.0",
-    package_dir={"dmsc": "csrc"},
-    packages=["dmsc"],
+    packages=find_packages(),
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExtension},
 )

@@ -4,7 +4,7 @@
 !.gitignore
 !.clang-format
 
-/csrc/gpu/metal/*.h
+/dmsc/csrc/gpu/metal/*.h
 *.so
 /uv.lock
 /dmsc.egg-info
@@ -17,3 +17,4 @@ trace*.json
 uv.lock
 *.log
 tmp
+scratch
