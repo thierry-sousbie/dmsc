@@ -163,7 +163,8 @@ def run_all_benchmarks(
 
     for t in thresholds:
         print(f"\n{'=' * 85}")
-        print(f" BENCHMARK: Persistence Threshold = {t}")
+        opt_str = f"{trace_valleys=}, {trace_ridges=}, {trace_peaks=}, {trace_basins=}"
+        print(f" BENCHMARK({opt_str}): Persistence Threshold = {t}")
         print(f"{'=' * 85}")
         print(f"{'Configuration':<30} | {'Warmup':>11} | {'Hot (Avg ± Std) / image':>24} | {'Avg Crit Pts':>16}")
         print("-" * 85)
