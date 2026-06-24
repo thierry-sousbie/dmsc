@@ -3,8 +3,7 @@ import os
 import numpy as np
 import torch
 
-from dmsc import compute_dmsc
-from test_dmsc import generate_noisy_landscape
+from dmsc import compute_dmsc, generate_noisy_landscape
 
 
 def save_ground_truth():
