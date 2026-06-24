@@ -3,7 +3,7 @@ import os
 import numpy as np
 import torch
 
-from csrc.dmsc import compute_dmsc
+from dmsc import compute_dmsc
 from test_dmsc import generate_noisy_landscape
 
 

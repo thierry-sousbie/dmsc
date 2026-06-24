@@ -158,6 +158,31 @@ class MSComplex:
     def __iter__(self):
         return iter(astuple(self))
 
+    def plot_gradient(self, ax, img, plot_bg=True, title="Raw Discrete Gradient Vector Field"):
+        from .plots import plot_discrete_gradient
+
+        return plot_discrete_gradient(self, ax, img, plot_bg=plot_bg, title=title)
+
+    def plot_complex(
+        self, ax, img, title="MS Complex", region_type=None, plot_boundaries=True, plot_edges=None, plot_pairs=False
+    ):
+        from .plots import plot_complex_layer
+
+        return plot_complex_layer(
+            self,
+            ax,
+            img,
+            title=title,
+            region_type=region_type,
+            plot_boundaries=plot_boundaries,
+            plot_edges=plot_edges,
+            plot_pairs=plot_pairs,
+        )
+
+    def plot_barcode(self, ax, ms_flt=None, title="Persistence Barcode"):
+        from .plots import plot_barcode
+
+        return plot_barcode(self, ax, ms_flt=ms_flt, title=title)
 
 def extract_full_complex(
     img,

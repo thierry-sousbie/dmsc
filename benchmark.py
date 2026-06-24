@@ -9,7 +9,7 @@ from contextlib import contextmanager
 import torch
 from torch.profiler import ProfilerActivity, profile, record_function
 
-from dmsc import compute_dmsc
+from dmsc import compute_dmsc, generate_noisy_landscape
 
 try:
     libc = ctypes.CDLL(None)
@@ -43,18 +43,7 @@ def suppress_c_stdout():
         os.close(devnull)
 
 
-def generate_noisy_landscape(H=4096, W=4096):
-    y, x = torch.meshgrid(torch.linspace(-2, 2, H), torch.linspace(-2, 2, W), indexing="ij")
-    peak1 = torch.exp(-((x - 1) ** 2 + (y) ** 2) / 0.5)
-    peak2 = torch.exp(-((x + 1) ** 2 + (y) ** 2) / 0.5)
-    valley1 = -0.5 * torch.exp(-((x) ** 2 + (y - 1) ** 2) / 0.5)
-    valley2 = -1.0 * torch.exp(-((x) ** 2 + (y + 1) ** 2) / 0.5)
 
-    z = peak1 + peak2 + valley1 + valley2
-    noise = (torch.rand(H, W) - 0.5) * 0.1
-    z += noise
-
-    return z.to(torch.float32)
 
 
 def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_profiler=False, is_batched=False, **kwargs):
@@ -162,7 +151,7 @@ def run_all_benchmarks(
         num_threads = multiprocessing.cpu_count()
 
     print(f"Generating {H}x{W} noisy landscape...")
-    img_cpu = generate_noisy_landscape(H, W)
+    img_cpu = generate_noisy_landscape(H, W, z_scale=1.0)
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
