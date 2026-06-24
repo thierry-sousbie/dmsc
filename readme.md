@@ -32,7 +32,22 @@ n.b.: If you re using CUDA, be carefull to install the appropriate torch version
 
 ## Visualizations
 
-You can generate complete visual dashboards of the vector fields, critical points, and segmentations using the built-in test suite.
+You can generate complete visual dashboards of the vector fields, critical points, and segmentations using the built-in plotting utilities.
+
+```python
+# Render a full 3x2 dashboard for a single complex
+complex_data.plot(img, filename="dashboard.png")
+
+# Or render a 3x3 dashboard comparing raw and filtered complexes side-by-side
+complex_raw.plot(img, ms_flt=complex_flt, filename="comparison_dashboard.png")
+
+# You can also plot individual components directly on a matplotlib axis:
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots()
+complex_data.plot_gradient(ax, img)
+complex_data.plot_complex(ax, img, plot_boundaries=True, plot_edges=True)
+complex_data.plot_barcode(ax, ms_other=complex_flt)
+```
 
 ### Primal Orientation (`is_dual=False`)
 *Maxima act as faces (pixel corners), Saddle Points as edges (segments between pixels), Minima act as vertices vertices (pixel center).*

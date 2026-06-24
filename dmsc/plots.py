@@ -39,7 +39,14 @@ def plot_discrete_gradient(ms_complex, ax, img, plot_bg=True, title="Raw Discret
     y_t, x_t = dst_coords[:, 0], dst_coords[:, 1]
 
     bounds_mask = (
-        (y_i >= -1) & (y_i <= int(H)) & (x_i >= -1) & (x_i <= int(W)) & (y_t >= -1) & (y_t <= int(H)) & (x_t >= -1) & (x_t <= int(W))
+        (y_i >= -1)
+        & (y_i <= int(H))
+        & (x_i >= -1)
+        & (x_i <= int(W))
+        & (y_t >= -1)
+        & (y_t <= int(H))
+        & (x_t >= -1)
+        & (x_t <= int(W))
     )
 
     if np.any(bounds_mask):
@@ -136,7 +143,9 @@ def plot_complex_layer(
             ax.set_facecolor("white")
     else:
         if img is not None:
-            ax.imshow(img.cpu().numpy(), cmap="viridis", origin="lower", extent=[-0.5, W - 0.5, -0.5, H - 0.5], zorder=0)
+            ax.imshow(
+                img.cpu().numpy(), cmap="viridis", origin="lower", extent=[-0.5, W - 0.5, -0.5, H - 0.5], zorder=0
+            )
 
     # Plot Region Boundaries (Watershed lines)
     if plot_boundaries and regions is not None:
@@ -282,7 +291,7 @@ def plot_complex_layer(
     ax.set_ylim(-0.5, float(H) - 0.5)
 
 
-def plot_barcode(ms_raw, ax, ms_flt=None, title="Persistence Barcode"):
+def plot_barcode(ms_main, ax, ms_other=None, name="", name_other="Other", title="Persistence Barcode"):
     """Plots the persistence barcode diagram showing feature lifetimes before and after simplification."""
 
     def extract_and_sort(ms_complex):
@@ -296,8 +305,8 @@ def plot_barcode(ms_raw, ax, ms_flt=None, title="Persistence Barcode"):
         # Sort descending for a clean waterfall visualization
         return np.sort(p_max)[::-1], np.sort(p_min)[::-1]
 
-    p_max_raw, p_min_raw = extract_and_sort(ms_raw)
-    p_max_flt, p_min_flt = extract_and_sort(ms_flt)
+    p_max_raw, p_min_raw = extract_and_sort(ms_main)
+    p_max_flt, p_min_flt = extract_and_sort(ms_other)
 
     # Plot Maxima (Red)
     if len(p_max_raw) > 0:
@@ -306,9 +315,9 @@ def plot_barcode(ms_raw, ax, ms_flt=None, title="Persistence Barcode"):
         # Overlay preserved features as thick, dark lines
         if len(p_max_flt) > 0:
             x_max_flt = np.arange(len(p_max_flt))
-            ax.vlines(x_max_flt, 0, p_max_flt, color="darkred", linewidth=3.0, alpha=1.0, label="Preserved Maxima")
+            ax.vlines(x_max_flt, 0, p_max_flt, color="darkred", linewidth=3.0, alpha=1.0, label=f"{name_other} Maxima")
         # Draw all raw features as thin, light lines
-        ax.vlines(x_max, 0, p_max_raw, color="lightcoral", linewidth=1.5, alpha=0.7, label="Raw Maxima")
+        ax.vlines(x_max, 0, p_max_raw, color="lightcoral", linewidth=1.5, alpha=0.7, label=f"{name} Maxima")
 
     else:
         x_max = []
@@ -321,9 +330,9 @@ def plot_barcode(ms_raw, ax, ms_flt=None, title="Persistence Barcode"):
         # Overlay preserved features as thick, dark lines
         if len(p_min_flt) > 0:
             x_min_flt = np.arange(len(p_min_flt)) + offset
-            ax.vlines(x_min_flt, 0, p_min_flt, color="darkblue", linewidth=3.0, alpha=1.0, label="Preserved Minima")
+            ax.vlines(x_min_flt, 0, p_min_flt, color="darkblue", linewidth=3.0, alpha=1.0, label=f"{name_other} Minima")
         # Draw all raw features as thin, light lines
-        ax.vlines(x_min, 0, p_min_raw, color="lightskyblue", linewidth=1.5, alpha=0.7, label="Raw Minima")
+        ax.vlines(x_min, 0, p_min_raw, color="lightskyblue", linewidth=1.5, alpha=0.7, label=f"{name} Minima")
 
     ax.set_title(title)
     ax.set_ylabel("Persistence (Lifetime)")
@@ -333,97 +342,104 @@ def plot_barcode(ms_raw, ax, ms_flt=None, title="Persistence Barcode"):
         ax.legend(loc="upper right", fontsize=8)
 
 
-def create_dashboard(img, ms_raw, ms_flt, filename=None, seed=None):
-    """Generates a strictly 3x3 plot dashboard displaying the entire extraction and simplification pipeline."""
-    fig, axes = plt.subplots(3, 3, figsize=(24, 24))
+def create_dashboard(img, ms_main, ms_other=None, name="Raw", name_other="Filtered", title=None, filename=None):
+    """Generates a plot dashboard displaying the entire extraction and simplification pipeline."""
+    ncols = 3 if ms_other is not None else 2
+    fig, axes = plt.subplots(3, ncols, figsize=(8 * ncols, 24))
 
-    # Add the seed to the main title above the pictures if provided
-    if seed is not None:
-        fig.suptitle(f"Random Seed: {seed}", fontsize=26, fontweight="bold")
+    # Construct the global title
+    if title:
+        fig.suptitle(title, fontsize=26, fontweight="bold")
+
+    name_suffix = f" ({name})" if name else ""
+    other_suffix = f" ({name_other})" if name_other else ""
 
     # --- ROW 0: Density Views ---
-    # 0,0: Discrete gradient overlayed on density (Raw)
-    plot_discrete_gradient(ms_raw, axes[0, 0], img, plot_bg=True, title="Discrete Gradient on Density (Raw)")
+    # 0,0: Discrete gradient overlayed on density
+    plot_discrete_gradient(ms_main, axes[0, 0], img, plot_bg=True, title=f"Discrete Gradient on Density{name_suffix}")
 
-    # 0,1: MS complex overlayed on density (Raw) -> NOW WITH PAIRS
+    # 0,1: MS complex overlayed on density
     plot_complex_layer(
-        ms_raw,
+        ms_main,
         axes[0, 1],
         img,
-        "MS Complex on Density (Raw)",
+        f"MS Complex on Density{name_suffix}",
         region_type=None,
         plot_edges=True,
         plot_boundaries=False,
         plot_pairs=True,
     )
 
-    # 0,2: MS complex overlayed on density (Filtered) -> NOW WITH PAIRS
-    plot_complex_layer(
-        ms_flt,
-        axes[0, 2],
-        img,
-        "MS Complex on Density (Filtered)",
-        region_type=None,
-        plot_edges=True,
-        plot_boundaries=False,
-        plot_pairs=True,
-    )
+    if ms_other is not None:
+        # 0,2: MS complex overlayed on density (Other)
+        plot_complex_layer(
+            ms_other,
+            axes[0, 2],
+            img,
+            f"MS Complex on Density{other_suffix}",
+            region_type=None,
+            plot_edges=True,
+            plot_boundaries=False,
+            plot_pairs=True,
+        )
 
     # --- ROW 1: Peak Views ---
     # 1,0: Keep this panel clean/empty to focus attention on the barcode below
     axes[1, 0].axis("off")
 
-    # 1,1: MSComplex overlayed on peak regions (Raw)
+    # 1,1: MSComplex overlayed on peak regions
     plot_complex_layer(
-        ms_raw,
+        ms_main,
         axes[1, 1],
         img,
-        "MS Complex overlayed on Peak Regions",
+        f"MS Complex overlayed on Peak Regions{name_suffix}",
         region_type="peaks",
         plot_edges=True,
         plot_boundaries=False,
     )
-    # 1,2: MSComplex overlayed on peak regions (Filtered)
-    plot_complex_layer(
-        ms_flt,
-        axes[1, 2],
-        img,
-        "MS Complex overlayed on Peak Regions",
-        region_type="peaks",
-        plot_edges=True,
-        plot_boundaries=False,
-    )
+    if ms_other is not None:
+        # 1,2: MSComplex overlayed on peak regions (Other)
+        plot_complex_layer(
+            ms_other,
+            axes[1, 2],
+            img,
+            f"MS Complex overlayed on Peak Regions{other_suffix}",
+            region_type="peaks",
+            plot_edges=True,
+            plot_boundaries=False,
+        )
 
     # --- ROW 2: Basin Views ---
-    # 2,0: Barcode Diagram (Overlay Raw + Filtered)
-    plot_barcode(ms_raw, axes[2, 0], ms_flt, title="Persistence Barcode")
+    # 2,0: Barcode Diagram
+    plot_barcode(ms_main, axes[2, 0], ms_other=ms_other, name=name, name_other=name_other, title="Persistence Barcode")
 
-    # 2,1: MSComplex overlayed on basins regions (Raw)
+    # 2,1: MSComplex overlayed on basins regions
     plot_complex_layer(
-        ms_raw,
+        ms_main,
         axes[2, 1],
         img,
-        "MS Complex overlayed on Basin Regions",
+        f"MS Complex overlayed on Basin Regions{name_suffix}",
         region_type="basins",
         plot_boundaries=False,
         plot_edges=True,
     )
 
-    # 2,2: MSComplex overlayed on basins regions (Filtered)
-    plot_complex_layer(
-        ms_flt,
-        axes[2, 2],
-        img,
-        "MS Complex overlayed on Basin Regions",
-        region_type="basins",
-        plot_boundaries=False,
-        plot_edges=True,
-    )
+    if ms_other is not None:
+        # 2,2: MSComplex overlayed on basins regions (Other)
+        plot_complex_layer(
+            ms_other,
+            axes[2, 2],
+            img,
+            f"MS Complex overlayed on Basin Regions{other_suffix}",
+            region_type="basins",
+            plot_boundaries=False,
+            plot_edges=True,
+        )
 
     plt.tight_layout()
 
     # Adjust layout to make room for the suptitle so it doesn't overlap
-    if seed is not None:
+    if title:
         fig.subplots_adjust(top=0.95)
 
     if filename is not None:

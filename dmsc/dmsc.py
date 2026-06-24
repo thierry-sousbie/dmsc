@@ -158,6 +158,14 @@ class MSComplex:
     def __iter__(self):
         return iter(astuple(self))
 
+    def plot(self, img, ms_other=None, name="", name_other="Other", title=None, filename=None):
+        """Generates a complete dashboard of the MS complex. If ms_other is provided, it plots a side-by-side comparison."""
+        from .plots import create_dashboard
+
+        return create_dashboard(
+            img, self, ms_other=ms_other, name=name, name_other=name_other, title=title, filename=filename
+        )
+
     def plot_gradient(self, ax, img, plot_bg=True, title="Raw Discrete Gradient Vector Field"):
         from .plots import plot_discrete_gradient
 
@@ -179,10 +187,11 @@ class MSComplex:
             plot_pairs=plot_pairs,
         )
 
-    def plot_barcode(self, ax, ms_flt=None, title="Persistence Barcode"):
+    def plot_barcode(self, ax, ms_other=None, name="", name_other="Other", title="Persistence Barcode"):
         from .plots import plot_barcode
 
-        return plot_barcode(self, ax, ms_flt=ms_flt, title=title)
+        plot_barcode(self, ax, ms_other=ms_other, name=name, name_other=name_other, title=title)
+
 
 def extract_full_complex(
     img,

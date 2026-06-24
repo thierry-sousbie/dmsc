@@ -3,11 +3,11 @@ import torch
 
 def generate_noisy_landscape(H=20, W=20, with_loop=False, z_scale=2.0):
     """Generates a landscape with noise to test persistence simplification.
-    
+
     Args:
         H (int): Height of the generated landscape.
         W (int): Width of the generated landscape.
-        with_loop (bool): If True, adds an extra topological feature (peak + slope) 
+        with_loop (bool): If True, adds an extra topological feature (peak + slope)
                           that creates more complex manifold topology.
         z_scale (float): Scaling factor applied to the base landscape before adding noise.
                          (Default is 2.0. Use 1.0 for backward compatibility with older benchmarks).
@@ -27,5 +27,5 @@ def generate_noisy_landscape(H=20, W=20, with_loop=False, z_scale=2.0):
 
     noise = (torch.rand(H, W) - 0.5) * 0.1
     z = z * z_scale + noise
-    
+
     return z.to(torch.float32)

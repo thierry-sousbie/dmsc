@@ -43,9 +43,6 @@ def suppress_c_stdout():
         os.close(devnull)
 
 
-
-
-
 def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_profiler=False, is_batched=False, **kwargs):
     """Runs a warmup, measures it, averages hot runs, and optionally profiles."""
 

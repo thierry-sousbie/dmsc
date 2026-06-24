@@ -7,29 +7,41 @@ import numpy as np
 import torch
 
 from dmsc import compute_dmsc, generate_noisy_landscape
-from dmsc.plots import create_dashboard
-
-
-
 
 
 def run_evaluation(img, H, W, extraction_fn, suffix, no_plots=False, seed=None, **kwargs):
     """Runs the entire pipeline for a given extraction function and saves the plots."""
     print(f"\n--- RUNNING EVALUATION: {suffix.upper()} ---")
 
+    title = f"Random Seed: {seed}" if seed is not None else None
+
     print("Testing Primal Execution Mode (is_dual=False)...")
     ms_raw = extraction_fn(img, -1.0, return_gradient=True, **kwargs)
     ms_flt = extraction_fn(img, 0.15, **kwargs)
 
     if not no_plots:
-        create_dashboard(img.cpu(), ms_raw, ms_flt, filename=f"visualizations/dmsc_dashboard_primal_{suffix}.png", seed=seed)
+        ms_raw.plot(
+            img.cpu(),
+            ms_other=ms_flt,
+            name="Raw",
+            name_other="Filtered",
+            title=title,
+            filename=f"visualizations/dmsc_dashboard_primal_{suffix}.png",
+        )
 
     print("Testing Dual Execution Mode (is_dual=True)...")
     ms_raw_min = extraction_fn(img, -1.0, return_gradient=True, is_dual=True, **kwargs)
     ms_flt_min = extraction_fn(img, 0.15, return_gradient=False, is_dual=True, **kwargs)
 
     if not no_plots:
-        create_dashboard(img.cpu(), ms_raw_min, ms_flt_min, filename=f"visualizations/dmsc_dashboard_dual_{suffix}.png", seed=seed)
+        ms_raw_min.plot(
+            img.cpu(),
+            ms_other=ms_flt_min,
+            name="Raw",
+            name_other="Filtered",
+            title=title,
+            filename=f"visualizations/dmsc_dashboard_dual_{suffix}.png",
+        )
 
 
 def test_dmsc(
