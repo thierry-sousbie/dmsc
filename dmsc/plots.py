@@ -1,0 +1,450 @@
+import matplotlib
+
+matplotlib.use("Agg")  # Use Agg for non-interactive plotting
+import matplotlib.collections as mcoll
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+
+
+def plot_discrete_gradient(ms_complex, ax, img, plot_bg=True, title="Raw Discrete Gradient Vector Field"):
+    """Plots the raw dmsc gradient vector field (Vectorized for high performance)."""
+    H, W = ms_complex.shape
+    if plot_bg and img is not None:
+        ax.imshow(img.cpu().numpy(), cmap="viridis", origin="lower", alpha=0.6, zorder=0)
+
+    grad_numpy = ms_complex.grad_indices.cpu().numpy()
+
+    # Vectorized extraction to avoid massive Python for-loop overhead
+    valid_mask = grad_numpy != -1
+    src_ids = np.arange(len(grad_numpy))[valid_mask]
+    dst_ids = grad_numpy[valid_mask]
+
+    def get_dim(c_types):
+        return np.where(c_types == 0, 0, np.where((c_types == 1) | (c_types == 2), 1, 2))
+
+    src_dims = get_dim(src_ids % 4)
+    dst_dims = get_dim(dst_ids % 4)
+
+    # Only draw arrows from higher dimension to lower dimension
+    arrow_mask = src_dims > dst_dims
+    src_ids = src_ids[arrow_mask]
+    dst_ids = dst_ids[arrow_mask]
+
+    # Decode coordinates correctly based on cell type using the unified method
+    src_coords = ms_complex.to_coordinates_yx(torch.from_numpy(src_ids), staggered=True).cpu().numpy()
+    dst_coords = ms_complex.to_coordinates_yx(torch.from_numpy(dst_ids), staggered=True).cpu().numpy()
+
+    y_i, x_i = src_coords[:, 0], src_coords[:, 1]
+    y_t, x_t = dst_coords[:, 0], dst_coords[:, 1]
+
+    bounds_mask = (
+        (y_i >= -1)
+        & (y_i <= int(H))
+        & (x_i >= -1)
+        & (x_i <= int(W))
+        & (y_t >= -1)
+        & (y_t <= int(H))
+        & (x_t >= -1)
+        & (x_t <= int(W))
+    )
+
+    if np.any(bounds_mask):
+        ax.quiver(
+            x_i[bounds_mask],
+            y_i[bounds_mask],
+            x_t[bounds_mask] - x_i[bounds_mask],
+            y_t[bounds_mask] - y_i[bounds_mask],
+            scale_units="xy",
+            angles="xy",
+            scale=1,
+            color="white",
+            width=0.003,
+            headwidth=4,
+            headlength=5,
+            alpha=0.85,
+            zorder=10,
+        )
+
+    max_pts = ms_complex.offset_max_pts_yx.cpu().numpy()
+    min_pts = ms_complex.offset_min_pts_yx.cpu().numpy()
+    sad_pts = ms_complex.offset_sad_pts_yx.cpu().numpy()
+
+    # 4. Plot Critical Nodes
+    if len(max_pts) > 0:
+        ax.scatter(
+            max_pts[:, 1], max_pts[:, 0], c="red", marker="^", edgecolors="black", s=60, label="Maxima", zorder=5
+        )
+
+    if len(min_pts) > 0:
+        ax.scatter(
+            min_pts[:, 1], min_pts[:, 0], c="blue", marker="v", edgecolors="black", s=60, label="Minima", zorder=5
+        )
+
+    if len(sad_pts) > 0:
+        ax.scatter(
+            sad_pts[:, 1], sad_pts[:, 0], c="cyan", marker="s", edgecolors="black", s=40, label="Saddles", zorder=5
+        )
+
+    ax.set_title(title)
+    ax.set_xlim(-0.5, float(W) - 0.5)
+    ax.set_ylim(-0.5, float(H) - 0.5)
+
+
+def plot_complex_layer(
+    ms_complex, ax, img, title, region_type=None, plot_boundaries=True, plot_edges=None, plot_pairs=False
+):
+    """Plots the simplified structural topological complex maps from an MSComplex object.
+    region_type can be None, "peaks", or "basins".
+    """
+    plot_regions = region_type is not None
+    if plot_edges is None:
+        plot_edges = not plot_regions
+
+    regions = None
+    if region_type == "peaks":
+        regions = (
+            ms_complex.peaks.cpu().numpy() if ms_complex.peaks is not None and ms_complex.peaks.numel() > 0 else None
+        )
+    elif region_type == "basins":
+        regions = (
+            ms_complex.basins.cpu().numpy() if ms_complex.basins is not None and ms_complex.basins.numel() > 0 else None
+        )
+
+    # Use to_coordinates_yx to decode the raw 1D arrays into displayable 2D points
+    max_pts = ms_complex.to_coordinates_yx(ms_complex.max_pts, staggered=True).cpu().numpy()
+    min_pts = ms_complex.to_coordinates_yx(ms_complex.min_pts, staggered=True).cpu().numpy()
+    sad_pts = ms_complex.to_coordinates_yx(ms_complex.sad_pts, staggered=True).cpu().numpy()
+
+    H, W = ms_complex.shape
+    H, W = int(H), int(W)
+
+    if regions is not None:
+        rH, rW = regions.shape
+        if rH == H and rW == W:
+            my_extent = [-0.5, W - 0.5, -0.5, H - 0.5]
+            off_x, off_y = 0.5, 0.5
+        else:
+            my_extent = [-1.0, W, -1.0, H]
+            off_x, off_y = 0.0, 0.0
+    else:
+        my_extent = [-0.5, W - 0.5, -0.5, H - 0.5]
+        off_x, off_y = 0.5, 0.5
+
+    # Plot Background (Regions or Raw Image)
+    if plot_regions:
+        if regions is not None:
+            unique_vals, ids_map = np.unique(regions, return_inverse=True)
+            shuffled_vals = np.random.permutation(unique_vals)
+            colored_regions = shuffled_vals[ids_map].reshape(regions.shape)
+            masked_regions = np.ma.masked_where(regions == -1, colored_regions)
+            ax.imshow(masked_regions, cmap="tab20", origin="lower", extent=my_extent, interpolation="nearest", zorder=1)
+        else:
+            ax.set_facecolor("white")
+    else:
+        if img is not None:
+            ax.imshow(
+                img.cpu().numpy(), cmap="viridis", origin="lower", extent=[-0.5, W - 0.5, -0.5, H - 0.5], zorder=0
+            )
+
+    # Plot Region Boundaries (Watershed lines)
+    if plot_boundaries and regions is not None:
+        segs = []
+        diff_x = regions[:, :-1] != regions[:, 1:]
+        y_idx_x, x_idx_x = np.where(diff_x)
+        if len(y_idx_x) > 0:
+            segs_x = np.empty((len(y_idx_x), 2, 2))
+            segs_x[:, 0, 0] = x_idx_x + off_x
+            segs_x[:, 0, 1] = y_idx_x + off_y - 1.0
+            segs_x[:, 1, 0] = x_idx_x + off_x
+            segs_x[:, 1, 1] = y_idx_x + off_y
+            segs.append(segs_x)
+
+        diff_y = regions[:-1, :] != regions[1:, :]
+        y_idx_y, x_idx_y = np.where(diff_y)
+        if len(y_idx_y) > 0:
+            segs_y = np.empty((len(y_idx_y), 2, 2))
+            segs_y[:, 0, 0] = x_idx_y + off_x - 1.0
+            segs_y[:, 0, 1] = y_idx_y + off_y
+            segs_y[:, 1, 0] = x_idx_y + off_x
+            segs_y[:, 1, 1] = y_idx_y + off_y
+            segs.append(segs_y)
+
+        if segs:
+            all_segs = np.vstack(segs)
+            boundary_color = "black" if region_type == "peaks" else "white"
+            boundary_style = "solid" if region_type == "peaks" else "dashed"
+            lc = mcoll.LineCollection(
+                all_segs, colors=boundary_color, linestyles=boundary_style, linewidths=1.2, alpha=0.9, zorder=2
+            )
+            ax.add_collection(lc)
+
+    # Plot Topological Edges (Manifolds or Straight Lines)
+    if plot_edges:
+
+        def add_edges(saddles, targets, edges_indices, color, style):
+            if edges_indices is None or len(edges_indices) == 0:
+                return
+            segs = []
+            for s_idx, t_idx in edges_indices.cpu().numpy():
+                sy, sx = saddles[s_idx]
+                ty, tx = targets[t_idx]
+                segs.append([[sx, sy], [tx, ty]])
+            lc = mcoll.LineCollection(segs, colors=color, linestyles=style, linewidths=1.5, alpha=0.7, zorder=3)
+            ax.add_collection(lc)
+
+        if len(ms_complex.ridges) > 0:
+            for i in range(len(sad_pts)):
+                arc1, arc2 = ms_complex.get_ridge(i, split_arcs=True)
+                for arc in (arc1, arc2):
+                    if len(arc) > 0:
+                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).cpu().numpy()
+                        ax.plot(
+                            coords[:, 1],
+                            coords[:, 0],
+                            color="red",
+                            linestyle="solid",
+                            linewidth=1.5,
+                            alpha=0.7,
+                            zorder=3,
+                        )
+        else:
+            add_edges(sad_pts, max_pts, ms_complex.e_max, color="red", style="solid")
+
+        if len(ms_complex.valleys) > 0:
+            for i in range(len(sad_pts)):
+                arc1, arc2 = ms_complex.get_valley(i, split_arcs=True)
+                for arc in (arc1, arc2):
+                    if len(arc) > 0:
+                        coords = ms_complex.to_coordinates_yx(arc, staggered=True).cpu().numpy()
+                        ax.plot(
+                            coords[:, 1],
+                            coords[:, 0],
+                            color="blue",
+                            linestyle="dashed",
+                            linewidth=1.5,
+                            alpha=0.7,
+                            zorder=3,
+                        )
+        else:
+            add_edges(sad_pts, min_pts, ms_complex.e_min, color="blue", style="dashed")
+
+    # Plot Persistence Pair Connections
+    if plot_pairs:
+
+        def add_pair_lines(saddle_pts, extrema_pts, paired_extrema_indices, color_fg, label):
+            if paired_extrema_indices is None or len(paired_extrema_indices) == 0:
+                return
+
+            valid_mask = paired_extrema_indices != -1
+            if not torch.any(valid_mask):
+                return
+
+            valid_saddle_ids = saddle_pts[valid_mask]
+            valid_extrema_indices = paired_extrema_indices[valid_mask].long()
+            valid_extrema_ids = extrema_pts[valid_extrema_indices]
+
+            ex_coords = ms_complex.to_coordinates_yx(valid_extrema_ids, staggered=True).cpu().numpy()
+            sad_coords = ms_complex.to_coordinates_yx(valid_saddle_ids, staggered=True).cpu().numpy()
+
+            segs = []
+            for i in range(len(ex_coords)):
+                ey, ex = ex_coords[i]
+                sy, sx = sad_coords[i]
+                segs.append([[ex, ey], [sx, sy]])
+
+            lc_bg = mcoll.LineCollection(segs, colors="white", linestyles="solid", linewidths=1.5, alpha=0.9, zorder=6)
+            lc_fg = mcoll.LineCollection(segs, colors=color_fg, linestyles="solid", linewidths=1.0, alpha=1.0, zorder=7)
+            ax.add_collection(lc_bg)
+            ax.add_collection(lc_fg)
+            ax.plot([], [], color=color_fg, linewidth=2, label=label)
+
+        add_pair_lines(
+            ms_complex.sad_pts,
+            ms_complex.max_pts,
+            getattr(ms_complex, "ppairs_max", None),
+            "magenta",
+            "Max-Saddle Pair",
+        )
+        add_pair_lines(
+            ms_complex.sad_pts, ms_complex.min_pts, getattr(ms_complex, "ppairs_min", None), "lime", "Min-Saddle Pair"
+        )
+
+    # Plot Critical Nodes
+    if len(max_pts) > 0:
+        ax.scatter(
+            max_pts[:, 1], max_pts[:, 0], c="red", marker="^", edgecolors="black", s=60, label="Maxima", zorder=8
+        )
+    if len(min_pts) > 0:
+        ax.scatter(
+            min_pts[:, 1], min_pts[:, 0], c="blue", marker="v", edgecolors="black", s=60, label="Minima", zorder=8
+        )
+    if len(sad_pts) > 0:
+        ax.scatter(
+            sad_pts[:, 1], sad_pts[:, 0], c="cyan", marker="s", edgecolors="black", s=40, label="Saddles", zorder=8
+        )
+
+    ax.set_title(title)
+    if region_type is not None or plot_pairs:
+        ax.legend(loc="upper right", fontsize=8)
+    ax.set_xlim(-0.5, float(W) - 0.5)
+    ax.set_ylim(-0.5, float(H) - 0.5)
+
+
+def plot_barcode(ms_main, ax, ms_other=None, name="", name_other="Other", title="Persistence Barcode"):
+    """Plots the persistence barcode diagram showing feature lifetimes before and after simplification."""
+
+    def extract_and_sort(ms_complex):
+        if ms_complex is None:
+            return np.array([]), np.array([])
+        p_max = ms_complex.p_max.cpu().numpy()
+        p_min = ms_complex.p_min.cpu().numpy()
+        # Filter out near-zero or invalid persistences
+        p_max = p_max[p_max > 1e-6]
+        p_min = p_min[p_min > 1e-6]
+        # Sort descending for a clean waterfall visualization
+        return np.sort(p_max)[::-1], np.sort(p_min)[::-1]
+
+    p_max_raw, p_min_raw = extract_and_sort(ms_main)
+    p_max_flt, p_min_flt = extract_and_sort(ms_other)
+
+    # Plot Maxima (Red)
+    if len(p_max_raw) > 0:
+        x_max = np.arange(len(p_max_raw))
+
+        # Overlay preserved features as thick, dark lines
+        if len(p_max_flt) > 0:
+            x_max_flt = np.arange(len(p_max_flt))
+            ax.vlines(x_max_flt, 0, p_max_flt, color="darkred", linewidth=3.0, alpha=1.0, label=f"{name_other} Maxima")
+        # Draw all raw features as thin, light lines
+        ax.vlines(x_max, 0, p_max_raw, color="lightcoral", linewidth=1.5, alpha=0.7, label=f"{name} Maxima")
+
+    else:
+        x_max = []
+
+    # Plot Minima (Blue)
+    if len(p_min_raw) > 0:
+        # Add a visual gap on the X-axis between the two classes
+        offset = len(p_max_raw) + max(1, len(p_max_raw) // 10)
+        x_min = np.arange(len(p_min_raw)) + offset
+        # Overlay preserved features as thick, dark lines
+        if len(p_min_flt) > 0:
+            x_min_flt = np.arange(len(p_min_flt)) + offset
+            ax.vlines(x_min_flt, 0, p_min_flt, color="darkblue", linewidth=3.0, alpha=1.0, label=f"{name_other} Minima")
+        # Draw all raw features as thin, light lines
+        ax.vlines(x_min, 0, p_min_raw, color="lightskyblue", linewidth=1.5, alpha=0.7, label=f"{name} Minima")
+
+    ax.set_title(title)
+    ax.set_ylabel("Persistence (Lifetime)")
+    ax.set_xlabel("Feature Index (Sorted)")
+
+    if len(p_max_raw) > 0 or len(p_min_raw) > 0:
+        ax.legend(loc="upper right", fontsize=8)
+
+
+def create_dashboard(img, ms_main, ms_other=None, name="Raw", name_other="Filtered", title=None, filename=None):
+    """Generates a plot dashboard displaying the entire extraction and simplification pipeline."""
+    ncols = 3 if ms_other is not None else 2
+    fig, axes = plt.subplots(3, ncols, figsize=(8 * ncols, 24))
+
+    # Construct the global title
+    if title:
+        fig.suptitle(title, fontsize=26, fontweight="bold")
+
+    name_suffix = f" ({name})" if name else ""
+    other_suffix = f" ({name_other})" if name_other else ""
+
+    # --- ROW 0: Density Views ---
+    # 0,0: Discrete gradient overlayed on density
+    plot_discrete_gradient(ms_main, axes[0, 0], img, plot_bg=True, title=f"Discrete Gradient on Density{name_suffix}")
+
+    # 0,1: MS complex overlayed on density
+    plot_complex_layer(
+        ms_main,
+        axes[0, 1],
+        img,
+        f"MS Complex on Density{name_suffix}",
+        region_type=None,
+        plot_edges=True,
+        plot_boundaries=False,
+        plot_pairs=True,
+    )
+
+    if ms_other is not None:
+        # 0,2: MS complex overlayed on density (Other)
+        plot_complex_layer(
+            ms_other,
+            axes[0, 2],
+            img,
+            f"MS Complex on Density{other_suffix}",
+            region_type=None,
+            plot_edges=True,
+            plot_boundaries=False,
+            plot_pairs=True,
+        )
+
+    # --- ROW 1: Peak Views ---
+    # 1,0: Keep this panel clean/empty to focus attention on the barcode below
+    axes[1, 0].axis("off")
+
+    # 1,1: MSComplex overlayed on peak regions
+    plot_complex_layer(
+        ms_main,
+        axes[1, 1],
+        img,
+        f"MS Complex overlayed on Peak Regions{name_suffix}",
+        region_type="peaks",
+        plot_edges=True,
+        plot_boundaries=False,
+    )
+    if ms_other is not None:
+        # 1,2: MSComplex overlayed on peak regions (Other)
+        plot_complex_layer(
+            ms_other,
+            axes[1, 2],
+            img,
+            f"MS Complex overlayed on Peak Regions{other_suffix}",
+            region_type="peaks",
+            plot_edges=True,
+            plot_boundaries=False,
+        )
+
+    # --- ROW 2: Basin Views ---
+    # 2,0: Barcode Diagram
+    plot_barcode(ms_main, axes[2, 0], ms_other=ms_other, name=name, name_other=name_other, title="Persistence Barcode")
+
+    # 2,1: MSComplex overlayed on basins regions
+    plot_complex_layer(
+        ms_main,
+        axes[2, 1],
+        img,
+        f"MS Complex overlayed on Basin Regions{name_suffix}",
+        region_type="basins",
+        plot_boundaries=False,
+        plot_edges=True,
+    )
+
+    if ms_other is not None:
+        # 2,2: MSComplex overlayed on basins regions (Other)
+        plot_complex_layer(
+            ms_other,
+            axes[2, 2],
+            img,
+            f"MS Complex overlayed on Basin Regions{other_suffix}",
+            region_type="basins",
+            plot_boundaries=False,
+            plot_edges=True,
+        )
+
+    plt.tight_layout()
+
+    # Adjust layout to make room for the suptitle so it doesn't overlap
+    if title:
+        fig.subplots_adjust(top=0.95)
+
+    if filename is not None:
+        plt.savefig(filename, dpi=150)
+        print(f"Saved plot to {filename}")
+        plt.close(fig)
+    else:
+        return fig, axes

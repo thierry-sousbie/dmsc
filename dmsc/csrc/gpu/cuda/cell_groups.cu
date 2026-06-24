@@ -104,11 +104,12 @@ __device__ __forceinline__ int trace_vertices(int start_v, const int* __restrict
   return curr;
 }
 
+// never use more than 256 threads, 4 concurrent blocks, ~ 64 registers per thread
 template <bool IS_DUAL>
-__global__ void compute_face_groups_kernel(const int* __restrict__ paired_with, const int* __restrict__ fast_crit_map,
-                                           const int* __restrict__ uf_max_parent, const int* __restrict__ crit_maxes,
-                                           const int* __restrict__ fast_region_id, int* __restrict__ out_groups, int H,
-                                           int W, int Nx, int* __restrict__ global_index) {
+__global__ __launch_bounds__(256, 4) void compute_face_groups_kernel(
+    const int* __restrict__ paired_with, const int* __restrict__ fast_crit_map, const int* __restrict__ uf_max_parent,
+    const int* __restrict__ crit_maxes, const int* __restrict__ fast_region_id, int* __restrict__ out_groups, int H,
+    int W, int Nx, int* __restrict__ global_index) {
   int num_faces = (H + 1) * (W + 1);
 
   while (true) {
@@ -151,11 +152,12 @@ __global__ void compute_face_groups_kernel(const int* __restrict__ paired_with, 
   }
 }
 
+// never use more than 256 threads, 4 concurrent blocks, ~ 64 registers per thread
 template <bool IS_DUAL>
-__global__ void compute_vertex_groups_kernel(const int* __restrict__ paired_with, const int* __restrict__ fast_crit_map,
-                                             const int* __restrict__ uf_min_parent, const int* __restrict__ crit_mins,
-                                             const int* __restrict__ fast_region_id, int* __restrict__ out_groups,
-                                             int H, int W, int Nx, int* __restrict__ global_index) {
+__global__ __launch_bounds__(256, 4) void compute_vertex_groups_kernel(
+    const int* __restrict__ paired_with, const int* __restrict__ fast_crit_map, const int* __restrict__ uf_min_parent,
+    const int* __restrict__ crit_mins, const int* __restrict__ fast_region_id, int* __restrict__ out_groups, int H,
+    int W, int Nx, int* __restrict__ global_index) {
   int num_vertices = H * W;
 
   while (true) {

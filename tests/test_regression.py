@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from csrc.dmsc import compute_dmsc
+from dmsc import compute_dmsc
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
