@@ -9,7 +9,7 @@ import torch
 from dmsc import compute_dmsc, generate_noisy_landscape
 
 
-def run_evaluation(img, H, W, extraction_fn, suffix, no_plots=False, seed=None, **kwargs):
+def run_evaluation(img, extraction_fn, suffix, no_plots=False, seed=None, **kwargs):
     """Runs the entire pipeline for a given extraction function and saves the plots."""
     print(f"\n--- RUNNING EVALUATION: {suffix.upper()} ---")
 
@@ -56,18 +56,14 @@ def test_dmsc(
 ):
     print(f"Default Threads: {torch.get_num_threads()}")
 
-    H, W = (resolution, resolution)
-
     print("Generating noisy landscape...")
-    img = generate_noisy_landscape(H, W, with_loop=with_loop)
+    img = generate_noisy_landscape(resolution, resolution, with_loop=with_loop)
 
     # Run Multi-Threaded Evaluation (1 core)
     # print("\nRunning Multi-Threaded (1 core)...")
     torch.set_num_threads(1)
     run_evaluation(
         img,
-        H,
-        W,
         compute_dmsc,
         "st",
         no_plots=no_plots,
@@ -83,8 +79,6 @@ def test_dmsc(
     torch.set_num_threads(max_threads)
     run_evaluation(
         img,
-        H,
-        W,
         compute_dmsc,
         "mt",
         no_plots=no_plots,
@@ -110,8 +104,6 @@ def test_dmsc(
 
     run_evaluation(
         img,
-        H,
-        W,
         compute_dmsc,
         "gpu",
         no_plots=no_plots,

@@ -70,10 +70,11 @@ uv run python test_dmsc.py
 
 ```python
 import torch
-from dmsc import compute_dmsc
+from dmsc import compute_dmsc, generate_noisy_landscape
 
-# Create a sample density map on the GPU
-img = torch.randn(256, 256, device="cuda")
+# Create a sample density map on the GPU (or use generate_noisy_landscape for a synthetic test image)
+# img = torch.randn(256, 256, device="cuda")
+img = generate_noisy_landscape(H=256, W=256, with_loop=True).cuda()
 
 # Extract the Morse-Smale Complex
 # persistence_threshold: Filters topological noise below this value
@@ -107,6 +108,9 @@ def compute_dmsc(
 * **`is_dual`**: `False` (Primal: Maxima as Faces), `True` (Dual: Maxima as Vertices).
 * **`trace_arcs` / `trace_manifolds`**: Flags to toggle the extraction of the ridge/valley lines and the basin/peak segmentations.
 * **`verbose`**: Prints execution timings to the console.
+
+> [!NOTE]
+> **Multithreading**: The number of threads used is automatically controlled by your PyTorch environment. You can adjust this dynamically using `torch.set_num_threads(N)`.
 
 
 ## Understanding the `MSComplex` Structure
