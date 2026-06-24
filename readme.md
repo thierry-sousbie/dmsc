@@ -96,8 +96,10 @@ def compute_dmsc(
     persistence_threshold,
     return_gradient=True,
     is_dual=False,
-    trace_arcs=True,
-    trace_manifolds=True,
+    trace_valleys=True,
+    trace_ridges=True,
+    trace_peaks=True,
+    trace_basins=True,
     verbose=False,
 )
 ```
@@ -106,7 +108,8 @@ def compute_dmsc(
 * **`persistence_threshold`**: Topological noise threshold.
 * **`return_gradient`**: If `True`, returns the raw combinatorial vector field mappings.
 * **`is_dual`**: `False` (Primal: Maxima as Faces), `True` (Dual: Maxima as Vertices).
-* **`trace_arcs` / `trace_manifolds`**: Flags to toggle the extraction of the ridge/valley lines and the basin/peak segmentations.
+* **`trace_valleys` / `trace_ridges`**: Flags to toggle the precise extraction of the descending (valleys) and ascending (ridges) 1-manifolds lines.
+* **`trace_peaks` / `trace_basins`**: Flags to toggle the exact pixel-level extraction of the ascending (peaks) and descending (basins) 2-manifolds segmentations.
 * **`verbose`**: Prints execution timings to the console.
 
 > [!NOTE]
