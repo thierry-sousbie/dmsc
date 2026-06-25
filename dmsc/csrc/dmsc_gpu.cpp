@@ -1,5 +1,6 @@
-#include <ATen/record_function.h>
+#include <ATen/Parallel.h>
 #include <pybind11/stl.h>
+#include <tbb/global_control.h>
 
 #include <vector>
 

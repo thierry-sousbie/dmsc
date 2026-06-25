@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <iostream>
 
 #include "../cpu/arcs_simplification.hxx"
 #include "../cpu/gradient.hxx"

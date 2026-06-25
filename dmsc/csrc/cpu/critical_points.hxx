@@ -1,21 +1,10 @@
 #pragma once
 
-#include <ATen/Parallel.h>
 #include <ATen/record_function.h>
 #include <tbb/blocked_range.h>
 #include <tbb/enumerable_thread_specific.h>
-#include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
-#include <tbb/parallel_invoke.h>
-#include <tbb/parallel_sort.h>
-#include <torch/extension.h>
 
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstring>
-#include <functional>
-#include <limits>
 #include <vector>
 
 #include "./critical_points_struct.hxx"

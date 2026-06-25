@@ -2,8 +2,6 @@
 
 #include <ATen/Parallel.h>
 #include <ATen/record_function.h>
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
 #include <torch/extension.h>
 
 #include <vector>
