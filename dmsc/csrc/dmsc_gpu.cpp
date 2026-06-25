@@ -180,7 +180,6 @@ PYBIND11_MODULE(dmsc_gpu, m) {
            })
       .def("__len__", [](const DMSComplex& r) { return 19; });
 
-  // Only one function exported now!
   m.def("extract_dmsc", &extract_dmsc_gpu, "GPU based Discrete Morse-Smale complex computation",
         pybind11::arg("scalar_field"), pybind11::arg("persistence_threshold"), pybind11::arg("return_gradient") = false,
         pybind11::arg("is_dual") = false, pybind11::arg("trace_max_arcs") = false,

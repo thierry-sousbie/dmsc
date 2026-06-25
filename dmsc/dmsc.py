@@ -193,7 +193,7 @@ class MSComplex:
         plot_barcode(self, ax, ms_other=ms_other, name=name, name_other=name_other, title=title)
 
 
-def extract_full_complex(
+def _compute_dmsc_on_device(
     img,
     persistence_threshold,
     return_gradient,
@@ -247,7 +247,7 @@ def compute_dmsc(
 
     start_time = time.perf_counter()
     # The C++ unified API automatically handles both single and batched layouts
-    output = extract_full_complex(
+    output = _compute_dmsc_on_device(
         img,
         persistence_threshold,
         return_gradient,

@@ -30,7 +30,6 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
                                      bool trace_min_groups, cpu::Workspace& ws) {
   int H = ws.H;
   int W = ws.W;
-  // int num_cells = ws.num_cells;
   ws.reset();
 
   tbb::global_control control(tbb::global_control::max_allowed_parallelism, at::get_num_threads());
@@ -170,7 +169,6 @@ PYBIND11_MODULE(dmsc_cpu, m) {
            })
       .def("__len__", [](const DMSComplex& r) { return 19; });
 
-  // Only one function exported now!
   m.def("extract_dmsc", &extract_dmsc_cpu, "Multithreaded Discrete Morse-Smale complex computation",
         pybind11::arg("scalar_field"), pybind11::arg("persistence_threshold"), pybind11::arg("return_gradient") = false,
         pybind11::arg("is_dual") = false, pybind11::arg("trace_max_arcs") = false,

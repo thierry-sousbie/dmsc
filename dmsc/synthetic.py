@@ -1,7 +1,7 @@
 import torch
 
 
-def generate_noisy_landscape(H=20, W=20, with_loop=False, z_scale=2.0):
+def generate_noisy_landscape(H=20, W=20, with_loop=False, z_scale=1.0, noise_scale=0.1):
     """Generates a landscape with noise to test persistence simplification.
 
     Args:
@@ -25,7 +25,7 @@ def generate_noisy_landscape(H=20, W=20, with_loop=False, z_scale=2.0):
         slope = -y / 4
         z += peak3 + slope
 
-    noise = (torch.rand(H, W) - 0.5) * 0.1
-    z = z * z_scale + noise
+    noise = torch.rand(H, W) - 0.5
+    z = z * z_scale + noise * noise_scale
 
     return z.to(torch.float32)

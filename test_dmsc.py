@@ -9,7 +9,7 @@ import torch
 from dmsc import compute_dmsc, generate_noisy_landscape
 
 
-def run_evaluation(img, extraction_fn, suffix, no_plots=False, seed=None, **kwargs):
+def run_evaluation(img, extraction_fn, suffix, p_threshold, no_plots=False, seed=None, **kwargs):
     """Runs the entire pipeline for a given extraction function and saves the plots."""
     print(f"\n--- RUNNING EVALUATION: {suffix.upper()} ---")
 
@@ -17,7 +17,7 @@ def run_evaluation(img, extraction_fn, suffix, no_plots=False, seed=None, **kwar
 
     print("Testing Primal Execution Mode (is_dual=False)...")
     ms_raw = extraction_fn(img, -1.0, return_gradient=True, **kwargs)
-    ms_flt = extraction_fn(img, 0.15, **kwargs)
+    ms_flt = extraction_fn(img, p_threshold, **kwargs)
 
     if not no_plots:
         ms_raw.plot(
@@ -31,7 +31,7 @@ def run_evaluation(img, extraction_fn, suffix, no_plots=False, seed=None, **kwar
 
     print("Testing Dual Execution Mode (is_dual=True)...")
     ms_raw_min = extraction_fn(img, -1.0, return_gradient=True, is_dual=True, **kwargs)
-    ms_flt_min = extraction_fn(img, 0.15, return_gradient=False, is_dual=True, **kwargs)
+    ms_flt_min = extraction_fn(img, p_threshold, return_gradient=False, is_dual=True, **kwargs)
 
     if not no_plots:
         ms_raw_min.plot(
@@ -53,11 +53,13 @@ def test_dmsc(
     trace_basins=True,
     seed=None,
     resolution=32,
+    noise_scale=0.1,
 ):
     print(f"Default Threads: {torch.get_num_threads()}")
 
     print("Generating noisy landscape...")
-    img = generate_noisy_landscape(resolution, resolution, with_loop=with_loop)
+    p_threshold = noise_scale
+    img = generate_noisy_landscape(resolution, resolution, with_loop=with_loop, z_scale=1.0, noise_scale=noise_scale)
 
     # Run Multi-Threaded Evaluation (1 core)
     # print("\nRunning Multi-Threaded (1 core)...")
@@ -72,6 +74,7 @@ def test_dmsc(
         trace_peaks=trace_peaks,
         trace_basins=trace_basins,
         seed=seed,
+        p_threshold=p_threshold,
     )
 
     max_threads = multiprocessing.cpu_count()
@@ -87,6 +90,7 @@ def test_dmsc(
         trace_peaks=trace_peaks,
         trace_basins=trace_basins,
         seed=seed,
+        p_threshold=p_threshold,
     )
 
     max_threads = multiprocessing.cpu_count()
@@ -112,6 +116,7 @@ def test_dmsc(
         trace_peaks=trace_peaks,
         trace_basins=trace_basins,
         seed=seed,
+        p_threshold=p_threshold,
     )
 
 
@@ -132,6 +137,7 @@ if __name__ == "__main__":
         "--no-basins", action="store_false", dest="trace_basins", default=True, help="Disable tracing basins"
     )
     parser.add_argument("--resolution", type=int, default=32, help="Image resolution")
+    parser.add_argument("--noise-scale", type=float, default=0.1, help="Amount of noise")
     args = parser.parse_args()
 
     # Determine seed: use provided or generate a unique one based on time
@@ -150,4 +156,5 @@ if __name__ == "__main__":
         trace_peaks=args.trace_peaks,
         trace_basins=args.trace_basins,
         resolution=args.resolution,
+        noise_scale=args.noise_scale,
     )

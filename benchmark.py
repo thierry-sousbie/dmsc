@@ -269,7 +269,7 @@ if __name__ == "__main__":
         "--no-basins", action="store_false", dest="trace_basins", default=True, help="Disable tracing basins"
     )
     parser.add_argument("--resolution", type=int, default=2048, help="Image resolution")
-    parser.add_argument("--num_threads", type=int, default=4, help="Number of threads to use (-1 -> max avail.)")
+    parser.add_argument("--num-threads", type=int, default=4, help="Number of threads to use (-1 -> max avail.)")
     args = parser.parse_args()
 
     run_all_benchmarks(
