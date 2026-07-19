@@ -29,9 +29,8 @@ void compute_gradient(int block_size, int H, int W, int Nx, const scalar_t* data
   paired_with.assign(4 * (H + 1) * (W + 1), -1);
 
   at::parallel_for(0, total_blocks, 1, [&](int64_t start, int64_t end) {
-    // Thread-local allocations (safe for parallel_for)
-    std::vector<int> Q;
-    Q.reserve(1024);
+    std::vector<int> queue;
+    queue.reserve(16);
 
     int L_edges[4];
     int L_faces[4];
@@ -113,13 +112,12 @@ void compute_gradient(int block_size, int H, int W, int Nx, const scalar_t* data
           }
 
           // Now pair faces and edges
-          Q.clear();
-          // All lower star faces in the queue
-          for (int i = 0; i < L_f_cnt; ++i) Q.push_back(L_faces[i]);
+          queue.clear();
+          for (int i = 0; i < L_f_cnt; ++i) queue.push_back(L_faces[i]);
 
-          size_t q_head = 0;
-          while (q_head < Q.size()) {
-            int f = Q[q_head++];
+          size_t queue_head = 0;
+          while (queue_head < queue.size()) {
+            int f = queue[queue_head++];
             if (paired_with[f] != -1) continue;
 
             int fy = get_y(f, Nx), fx = get_x(f, Nx);
@@ -169,13 +167,13 @@ void compute_gradient(int block_size, int H, int W, int Nx, const scalar_t* data
                     if (paired_with[new_f] == -1) {
                       bool already = false;
                       // add it to the queue if it's unpaired and is not already there
-                      for (size_t qi = q_head; qi < Q.size(); ++qi) {
-                        if (Q[qi] == new_f) {
+                      for (size_t qi = queue_head; qi < queue.size(); ++qi) {
+                        if (queue[qi] == new_f) {
                           already = true;
                           break;
                         }
                       }
-                      if (!already) Q.push_back(new_f);
+                      if (!already) queue.push_back(new_f);
                     }
                   }
                 }
@@ -229,6 +227,36 @@ void update_gradient_helpers(Workspace& ws, const scalar_t* data) {
         for (size_t i = 0; i < cp.saddles.size(); ++i) {
           fast_crit_map[cp.saddles[i]] = i;
         }
+      });
+}
+
+template <typename Workspace>
+void update_gradient_helpers_from_values(Workspace& ws, const float* max_values, const float* min_values) {
+  const auto& cp = ws.gradient_data.cp;
+  auto& fast_crit_map = ws.hlp.fast_crit_map;
+  auto& crit_max_vals = ws.hlp.crit_max_vals;
+  auto& crit_min_vals = ws.hlp.crit_min_vals;
+
+  RECORD_FUNCTION("helpers_fast_crit_map", {});
+  fast_crit_map.assign(ws.num_cells, -1);
+  crit_min_vals.resize(cp.mins.size());
+  crit_max_vals.resize(cp.maxes.size());
+
+  tbb::parallel_invoke(
+      [&]() {
+        for (size_t i = 0; i < cp.maxes.size(); ++i) {
+          fast_crit_map[cp.maxes[i]] = i;
+          crit_max_vals[i] = max_values[i];
+        }
+      },
+      [&]() {
+        for (size_t i = 0; i < cp.mins.size(); ++i) {
+          fast_crit_map[cp.mins[i]] = i;
+          crit_min_vals[i] = min_values[i];
+        }
+      },
+      [&]() {
+        for (size_t i = 0; i < cp.saddles.size(); ++i) fast_crit_map[cp.saddles[i]] = i;
       });
 }
 

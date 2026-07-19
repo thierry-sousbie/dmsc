@@ -1,5 +1,7 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAStream.h>
 
 // Core Structs (match C++ host definition)
 struct Arc {
@@ -183,8 +185,10 @@ void launch_trace_raw_arcs_geometry_cuda(const int* d_paired_with, const int* d_
                                          int num_saddles, bool trace_max_arcs, bool trace_min_arcs) {
   int threads = 256;
   int blocks = (num_saddles + threads - 1) / threads;
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-  trace_raw_arcs_geometry_kernel<<<blocks, threads>>>(
+  trace_raw_arcs_geometry_kernel<<<blocks, threads, 0, stream>>>(
       d_paired_with, d_fast_crit_map, d_crit_saddles, d_max_offsets, d_min_offsets, d_flat_max, d_flat_min,
       (SaddleNode*)d_saddle_nodes, H, W, Nx, num_saddles, trace_max_arcs, trace_min_arcs);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

@@ -28,13 +28,6 @@ struct PersistenceData {
   std::vector<uint8_t> min_alive;
   std::vector<CancelEvent> min_cancellations;
   std::vector<CancelEvent> max_cancellations;
-
-  void reset() {
-    // max_alive.clear();
-    // min_alive.clear();
-    // min_cancellations.clear();
-    // max_cancellations.clear();
-  }
 };
 
 }  // namespace cpu

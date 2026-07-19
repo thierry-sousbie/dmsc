@@ -7,6 +7,7 @@
 #include "./cpu/dmsc_impl.hxx"
 #include "./dmsc_struct.hxx"
 #include "./gpu/dmsc_impl.hxx"
+#include "./input_validation.hxx"
 
 using namespace gpu;
 
@@ -66,7 +67,13 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
 pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient = false,
                                   bool is_dual = false, bool trace_max_arcs = false, bool trace_min_arcs = false,
                                   bool trace_max_groups = false, bool trace_min_groups = false) {
-  TORCH_CHECK(scalar_field.dim() == 2 || scalar_field.dim() == 3, "Input tensor must be 2D [H, W] or 3D [B, H, W]");
+  validate_dmsc_input(scalar_field);
+  TORCH_CHECK(scalar_field.device().is_cuda() || scalar_field.device().is_mps(),
+              "GPU backend requires a CUDA or MPS tensor, got ", scalar_field.device());
+
+#ifndef __APPLE__
+  c10::cuda::CUDAGuard device_guard(scalar_field.device());
+#endif
 
   scalar_field = scalar_field.contiguous();
 

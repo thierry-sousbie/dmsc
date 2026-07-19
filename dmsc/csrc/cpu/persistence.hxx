@@ -30,7 +30,6 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
   auto& uf_max = ws.p_data.uf_max;
   auto& min_cancellations = ws.p_data.min_cancellations;
   auto& max_cancellations = ws.p_data.max_cancellations;
-  auto& safe_crit_map = ws.hlp.safe_crit_map;
 
   min_alive.assign(crit_mins.size(), true);
   max_alive.assign(crit_maxes.size(), true);
@@ -39,8 +38,14 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
   if (trace_max_arcs || trace_min_arcs) {
     min_cancellations.clear();
     max_cancellations.clear();
-    safe_crit_map.assign(fast_crit_map.begin(), fast_crit_map.end());
+    min_cancellations.reserve(sorted_min_saddles.size());
+    max_cancellations.reserve(sorted_max_saddles.size());
   }
+
+  std::vector<int> removed_min_saddles;
+  std::vector<int> removed_max_saddles;
+  removed_min_saddles.reserve(sorted_min_saddles.size());
+  removed_max_saddles.reserve(sorted_max_saddles.size());
 
   tbb::parallel_invoke(
       // Minima
@@ -83,7 +88,7 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
           uf_min_global.unite_from_root(dying_g, survivor_g);
 
           if (ev.persistence <= persistence_threshold) {
-            fast_crit_map[ev.saddle_id] = -1;
+            removed_min_saddles.push_back(ev.saddle_id);
             min_alive[dying_g] = false;
 
             int dying = uf_min.find(ev.c1_mid);
@@ -92,7 +97,7 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
             uf_min.unite_from_root(dying, survivor);
 
             if (trace_min_arcs) {
-              int s_idx = safe_crit_map[ev.saddle_id];
+              int s_idx = fast_crit_map[ev.saddle_id];
               min_cancellations.push_back(
                   {ev.saddle_id, s_idx, crit_mins[dying], dying, ev.persistence, /*is_max=*/false});
             }
@@ -140,7 +145,7 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
           uf_max_global.unite_from_root(dying_g, survivor_g);
 
           if (ev.persistence <= persistence_threshold) {
-            fast_crit_map[ev.saddle_id] = -1;
+            removed_max_saddles.push_back(ev.saddle_id);
             max_alive[dying_g] = false;
 
             int dying = uf_max.find(ev.c1_mid);
@@ -149,7 +154,7 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
             uf_max.unite_from_root(dying, survivor);
 
             if (trace_max_arcs) {
-              int s_idx = safe_crit_map[ev.saddle_id];
+              int s_idx = fast_crit_map[ev.saddle_id];
               max_cancellations.push_back(
                   {ev.saddle_id, s_idx, crit_maxes[dying], dying, ev.persistence, /*is_max=*/true});
             }
@@ -159,6 +164,9 @@ void compute_ppairs_and_simplify(Workspace& ws, float persistence_threshold, boo
 
   {
     RECORD_FUNCTION("erase_saddles", {});
+    for (int saddle_id : removed_min_saddles) fast_crit_map[saddle_id] = -1;
+    for (int saddle_id : removed_max_saddles) fast_crit_map[saddle_id] = -1;
+
     tbb::parallel_invoke(
         [&]() {
           sorted_min_saddles.erase(std::remove_if(sorted_min_saddles.begin(), sorted_min_saddles.end(),

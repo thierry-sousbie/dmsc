@@ -1,5 +1,8 @@
 #include <cuda_runtime.h>
 #include <math_constants.h>
+#include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAStream.h>
+#include <torch/extension.h>
 
 #include <stdexcept>
 #include <string>
@@ -206,10 +209,10 @@ void launch_cell_groups_cuda(const float* data,  // Kept to avoid breaking C++ s
                              const int* paired_with, const int* fast_crit_map, const int* uf_parent, const int* crits,
                              const int* fast_region_id, int* out_groups, int H, int W, int Nx, bool is_dual,
                              bool trace_faces) {
-  // Allocate and zero the native CUDA atomic counter
-  int* d_counter;
-  cudaMalloc(&d_counter, sizeof(int));
-  cudaMemset(d_counter, 0, sizeof(int));
+  auto options = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCUDA);
+  torch::Tensor counter = torch::zeros({1}, options);
+  int* d_counter = counter.data_ptr<int>();
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
   // Launch a 1D grid, 256 blocks * 256 threads is enough to saturate any GPU
   int threads = 256;
@@ -217,27 +220,21 @@ void launch_cell_groups_cuda(const float* data,  // Kept to avoid breaking C++ s
 
   if (!trace_faces) {
     if (is_dual) {
-      compute_vertex_groups_kernel<true><<<blocks, threads>>>(paired_with, fast_crit_map, uf_parent, crits,
-                                                              fast_region_id, out_groups, H, W, Nx, d_counter);
+      compute_vertex_groups_kernel<true><<<blocks, threads, 0, stream>>>(
+          paired_with, fast_crit_map, uf_parent, crits, fast_region_id, out_groups, H, W, Nx, d_counter);
     } else {
-      compute_vertex_groups_kernel<false><<<blocks, threads>>>(paired_with, fast_crit_map, uf_parent, crits,
-                                                               fast_region_id, out_groups, H, W, Nx, d_counter);
+      compute_vertex_groups_kernel<false><<<blocks, threads, 0, stream>>>(
+          paired_with, fast_crit_map, uf_parent, crits, fast_region_id, out_groups, H, W, Nx, d_counter);
     }
   } else {
     if (is_dual) {
-      compute_face_groups_kernel<true><<<blocks, threads>>>(paired_with, fast_crit_map, uf_parent, crits,
-                                                            fast_region_id, out_groups, H, W, Nx, d_counter);
+      compute_face_groups_kernel<true><<<blocks, threads, 0, stream>>>(
+          paired_with, fast_crit_map, uf_parent, crits, fast_region_id, out_groups, H, W, Nx, d_counter);
     } else {
-      compute_face_groups_kernel<false><<<blocks, threads>>>(paired_with, fast_crit_map, uf_parent, crits,
-                                                             fast_region_id, out_groups, H, W, Nx, d_counter);
+      compute_face_groups_kernel<false><<<blocks, threads, 0, stream>>>(
+          paired_with, fast_crit_map, uf_parent, crits, fast_region_id, out_groups, H, W, Nx, d_counter);
     }
   }
 
-  cudaError_t err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) {
-    cudaFree(d_counter);
-    throw std::runtime_error(std::string("Cell Groups Kernel Failed: ") + cudaGetErrorString(err));
-  }
-
-  cudaFree(d_counter);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

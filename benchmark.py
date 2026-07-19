@@ -116,13 +116,14 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
         with profile(activities=activities, record_shapes=True, profile_memory=True) as prof:
             with record_function(f"{name}_extraction"):
                 with suppress_c_stdout():
-                    _ = func(test_tensor, threshold, **kwargs)
+                    _ = func(img_tensor, threshold, **kwargs)
                     if img_tensor.device.type == "cuda":
                         torch.cuda.synchronize()
                     elif img_tensor.device.type == "mps":
                         torch.mps.synchronize()
 
         prof.export_chrome_trace(trace_filename)
+        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=30))
 
 
 def run_all_benchmarks(
@@ -144,7 +145,7 @@ def run_all_benchmarks(
     # H, W = 1024, 1024
     # H, W = 512, 512
 
-    if num_threads < 0:
+    if num_threads is None or num_threads < 0:
         num_threads = multiprocessing.cpu_count()
 
     print(f"Generating {H}x{W} noisy landscape...")

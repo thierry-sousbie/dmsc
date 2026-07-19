@@ -22,20 +22,28 @@ def generate_metal_headers():
 
     for metal_src_path in metal_files:
         metal_hdr_path = metal_src_path.replace(".metal", "_metal.h")
-        print(f"[SETUP] Auto-generating C++ header for {metal_src_path}...")
 
         with open(metal_src_path) as f:
             shader_code = f.read()
 
         base_name = os.path.basename(metal_src_path).replace(".metal", "").upper()
         macro_name = f"{base_name}_METAL_SRC"
+        header = (
+            "// AUTO-GENERATED DURING BUILD. DO NOT EDIT.\n"
+            "#pragma once\n\n"
+            f'const char* {macro_name} = R"METAL_SHADER(\n'
+            f"{shader_code}"
+            '\n)METAL_SHADER";\n'
+        )
 
+        if os.path.exists(metal_hdr_path):
+            with open(metal_hdr_path) as f:
+                if f.read() == header:
+                    continue
+
+        print(f"[SETUP] Generating C++ header for {metal_src_path}...")
         with open(metal_hdr_path, "w") as f:
-            f.write("// AUTO-GENERATED DURING BUILD. DO NOT EDIT.\n")
-            f.write("#pragma once\n\n")
-            f.write(f'const char* {macro_name} = R"METAL_SHADER(\n')
-            f.write(shader_code)
-            f.write('\n)METAL_SHADER";\n')
+            f.write(header)
 
 
 if tbb_lib is None or tbb_include is None:

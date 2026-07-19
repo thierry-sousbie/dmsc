@@ -1,5 +1,7 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAStream.h>
 #include <torch/extension.h>
 
 #include "../../cell_complex.hxx"
@@ -219,20 +221,22 @@ TracedSaddlesTensors launch_trace_from_saddles_cuda(torch::Tensor& active_field,
 
   int threads = 256;
   int blocks = 256;  // Fixed grid dimension
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
   if (is_dual) {
-    trace_saddles_kernel<true><<<blocks, threads>>>(
+    trace_saddles_kernel<true><<<blocks, threads, 0, stream>>>(
         active_field.data_ptr<float>(), paired_with.data_ptr<int>(), saddles_tensor.data_ptr<int>(),
         max_c1.data_ptr<int>(), max_c2.data_ptr<int>(), min_c1.data_ptr<int>(), min_c2.data_ptr<int>(),
         s_vals.data_ptr<float>(), max_len.data_ptr<int>(), min_len.data_ptr<int>(), H, W, Nx, num_saddles,
         global_counter.data_ptr<int>());
   } else {
-    trace_saddles_kernel<false><<<blocks, threads>>>(
+    trace_saddles_kernel<false><<<blocks, threads, 0, stream>>>(
         active_field.data_ptr<float>(), paired_with.data_ptr<int>(), saddles_tensor.data_ptr<int>(),
         max_c1.data_ptr<int>(), max_c2.data_ptr<int>(), min_c1.data_ptr<int>(), min_c2.data_ptr<int>(),
         s_vals.data_ptr<float>(), max_len.data_ptr<int>(), min_len.data_ptr<int>(), H, W, Nx, num_saddles,
         global_counter.data_ptr<int>());
   }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
 
   return {saddles_tensor, max_c1, max_c2, min_c1, min_c2, s_vals, max_len, min_len};
 }

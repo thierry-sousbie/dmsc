@@ -1,5 +1,7 @@
 #include <cuda_runtime.h>
 #include <math_constants.h>
+#include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAStream.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -192,7 +194,7 @@ __global__ void compute_discrete_gradient_kernel(const float* data, int* paired_
       }
     }
 
-    if (!__any_sync(0xFFFFFFFF, changed)) break;
+    if (!__any_sync(__activemask(), changed)) break;
   }
 }
 
@@ -200,16 +202,13 @@ void launch_gradient_cuda(const float* data, int* paired_with, int H, int W, boo
   dim3 block(16, 16);
   dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y);
   int Nx = W + 1;
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
   if (is_dual) {
-    compute_discrete_gradient_kernel<true><<<grid, block>>>(data, paired_with, H, W, Nx);
+    compute_discrete_gradient_kernel<true><<<grid, block, 0, stream>>>(data, paired_with, H, W, Nx);
   } else {
-    compute_discrete_gradient_kernel<false><<<grid, block>>>(data, paired_with, H, W, Nx);
+    compute_discrete_gradient_kernel<false><<<grid, block, 0, stream>>>(data, paired_with, H, W, Nx);
   }
 
-  cudaError_t err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) {
-    std::string err_str = cudaGetErrorString(err);
-    throw std::runtime_error("CUDA Kernel Failed: " + err_str);
-  }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
 }

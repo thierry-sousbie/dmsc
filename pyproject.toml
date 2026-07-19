@@ -18,6 +18,9 @@ dev = [
   "ruff",
 ]
 
+[tool.uv.extra-build-dependencies]
+dmsc = [{ requirement = "torch", match-runtime = true }]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 120

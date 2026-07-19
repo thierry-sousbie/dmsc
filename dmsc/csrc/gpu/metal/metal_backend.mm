@@ -244,7 +244,6 @@ gpu::CriticalPointsAsTensors launch_extract_critical_points_metal(torch::Tensor 
     torch::Tensor d_faces = torch::empty({(long)max_expected}, opts);
     torch::Tensor d_counters = torch::empty({3}, opts);
 
-    at::mps::getDefaultMPSStream()->synchronize(at::mps::SyncType::COMMIT_AND_WAIT);
     id<MTLCommandBuffer> commandBuffer = [g_ctx.commandQueue commandBuffer];
 
     // CRITICAL FIX: Initialize atomic counters to 0 natively on the GPU
@@ -318,15 +317,14 @@ TracedSaddlesTensors launch_trace_from_saddles_metal(torch::Tensor d_data, torch
     TracedSaddlesTensors out;
     out.saddles = d_saddles;
 
-    out.max_c1 = torch::full({sad_count}, -1, int_opts);
-    out.max_c2 = torch::full({sad_count}, -1, int_opts);
-    out.min_c1 = torch::full({sad_count}, -1, int_opts);
-    out.min_c2 = torch::full({sad_count}, -1, int_opts);
-    out.s_vals = torch::full({sad_count}, -1.0f, float_opts);
-    out.max_len = torch::full({sad_count * 2}, 0, int_opts);
-    out.min_len = torch::full({sad_count * 2}, 0, int_opts);
+    out.max_c1 = torch::empty({sad_count}, int_opts);
+    out.max_c2 = torch::empty({sad_count}, int_opts);
+    out.min_c1 = torch::empty({sad_count}, int_opts);
+    out.min_c2 = torch::empty({sad_count}, int_opts);
+    out.s_vals = torch::empty({sad_count}, float_opts);
+    out.max_len = torch::empty({sad_count * 2}, int_opts);
+    out.min_len = torch::empty({sad_count * 2}, int_opts);
 
-    at::mps::getDefaultMPSStream()->synchronize(at::mps::SyncType::COMMIT_AND_WAIT);
     id<MTLCommandBuffer> commandBuffer = [g_ctx.commandQueue commandBuffer];
 
     // Bypass PyTorch's lazy allocator entirely. Create a raw Metal buffer

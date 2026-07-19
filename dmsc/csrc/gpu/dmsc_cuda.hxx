@@ -25,6 +25,8 @@
 #define MAX_DAG_ALLOC_PER_PAIR_GPU 15
 
 void launch_gradient_cuda(const float* data, int* paired_with, int H, int W, bool is_dual);
+torch::Tensor launch_gather_critical_values_cuda(const torch::Tensor& data, const torch::Tensor& cell_ids, int H, int W,
+                                                 int Nx, bool faces, bool is_dual);
 gpu::CriticalPointsAsTensors launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx);
 void launch_cell_groups_cuda(const float* data, const int* paired_with, const int* fast_crit_map, const int* uf_parent,
                              const int* crits, const int* fast_region_id, int* out_groups, int H, int W, int Nx,
@@ -80,14 +82,18 @@ void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
   auto cpt = launch_extract_critical_points_cuda(d_paired_with.data_ptr<int>(), H, W, Nx);
   ws.gradient_data.cp = tensors_to_critical_points(cpt);
 
-  // Push critical points to GPU natively
   ws.gradient_data.d_maxes.copy_from_tensor(cpt.maxes, opts);
   ws.gradient_data.d_mins.copy_from_tensor(cpt.mins, opts);
   ws.gradient_data.d_saddles.copy_from_tensor(cpt.saddles, opts);
 
-  // update fast_crit_map and other helpers (CPU)
-  torch::Tensor scalar_field_cpu = ws.d_data.cpu();
-  cpu::update_gradient_helpers<IS_DUAL>(ws, scalar_field_cpu.data_ptr<float>());
+  {
+    RECORD_FUNCTION("gather_critical_values", {});
+    torch::Tensor max_values =
+        launch_gather_critical_values_cuda(ws.d_data, cpt.maxes, H, W, Nx, /*faces=*/true, IS_DUAL).cpu();
+    torch::Tensor min_values =
+        launch_gather_critical_values_cuda(ws.d_data, cpt.mins, H, W, Nx, /*faces=*/false, IS_DUAL).cpu();
+    cpu::update_gradient_helpers_from_values(ws, max_values.data_ptr<float>(), min_values.data_ptr<float>());
+  }
 }
 
 template <bool IS_DUAL = false, typename Workspace>

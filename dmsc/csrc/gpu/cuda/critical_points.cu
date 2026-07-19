@@ -1,5 +1,7 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
+#include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAStream.h>
 #include <torch/extension.h>
 
 #include "../../cell_complex.hxx"
@@ -71,6 +73,54 @@ __global__ void extract_critical_points_kernel(const int* __restrict__ paired_wi
   if (is_face) out_faces[f_base + f_offset] = id;
 }
 
+template <bool FACES, bool IS_DUAL>
+__global__ void gather_critical_values_kernel(const float* data, const int* cell_ids, float* values, int count, int H,
+                                              int W, int Nx) {
+  int id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id >= count) return;
+
+  int cell = cell_ids[id] / 4;
+  int y = cell / Nx;
+  int x = cell % Nx;
+  if constexpr (!FACES) {
+    values[id] = data[y * W + x];
+    return;
+  }
+
+  float value = IS_DUAL ? CUDART_INF_F : -CUDART_INF_F;
+  if (y > 0 && x > 0) value = IS_DUAL ? fminf(value, data[(y - 1) * W + x - 1])
+                                       : fmaxf(value, data[(y - 1) * W + x - 1]);
+  if (y > 0 && x < W) value = IS_DUAL ? fminf(value, data[(y - 1) * W + x])
+                                       : fmaxf(value, data[(y - 1) * W + x]);
+  if (y < H && x > 0) value = IS_DUAL ? fminf(value, data[y * W + x - 1])
+                                       : fmaxf(value, data[y * W + x - 1]);
+  if (y < H && x < W) value = IS_DUAL ? fminf(value, data[y * W + x]) : fmaxf(value, data[y * W + x]);
+  values[id] = value;
+}
+
+torch::Tensor launch_gather_critical_values_cuda(const torch::Tensor& data, const torch::Tensor& cell_ids, int H, int W,
+                                                 int Nx, bool faces, bool is_dual) {
+  torch::Tensor values = torch::empty({cell_ids.numel()}, data.options());
+  int count = cell_ids.numel();
+  if (count == 0) return values;
+
+  int threads = 256;
+  int blocks = (count + threads - 1) / threads;
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+  if (faces && is_dual) {
+    gather_critical_values_kernel<true, true><<<blocks, threads, 0, stream>>>(
+        data.data_ptr<float>(), cell_ids.data_ptr<int>(), values.data_ptr<float>(), count, H, W, Nx);
+  } else if (faces) {
+    gather_critical_values_kernel<true, false><<<blocks, threads, 0, stream>>>(
+        data.data_ptr<float>(), cell_ids.data_ptr<int>(), values.data_ptr<float>(), count, H, W, Nx);
+  } else {
+    gather_critical_values_kernel<false, false><<<blocks, threads, 0, stream>>>(
+        data.data_ptr<float>(), cell_ids.data_ptr<int>(), values.data_ptr<float>(), count, H, W, Nx);
+  }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return values;
+}
+
 gpu::CriticalPointsAsTensors launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx) {
   int num_cells = 4 * (H + 1) * (W + 1);
   int max_expected = num_cells / 3;
@@ -84,13 +134,16 @@ gpu::CriticalPointsAsTensors launch_extract_critical_points_cuda(const int* d_pa
 
   int threads = 256;
   int blocks = (num_cells + threads - 1) / threads;
+  cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-  extract_critical_points_kernel<<<blocks, threads>>>(d_paired_with, d_vertices.data_ptr<int>(),
-                                                      d_edges.data_ptr<int>(), d_faces.data_ptr<int>(),
-                                                      d_counters.data_ptr<int>(), H, W, Nx);
+  extract_critical_points_kernel<<<blocks, threads, 0, stream>>>(
+      d_paired_with, d_vertices.data_ptr<int>(), d_edges.data_ptr<int>(), d_faces.data_ptr<int>(),
+      d_counters.data_ptr<int>(), H, W, Nx);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
 
   int h_counters[3];
-  cudaMemcpy(h_counters, d_counters.data_ptr<int>(), 3 * sizeof(int), cudaMemcpyDeviceToHost);
+  C10_CUDA_CHECK(cudaMemcpyAsync(h_counters, d_counters.data_ptr<int>(), 3 * sizeof(int), cudaMemcpyDeviceToHost, stream));
+  C10_CUDA_CHECK(cudaStreamSynchronize(stream));
 
   int vertex_count = h_counters[0];
   int edge_count = h_counters[1];

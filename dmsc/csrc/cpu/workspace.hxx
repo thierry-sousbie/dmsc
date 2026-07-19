@@ -19,7 +19,6 @@ struct WSHelpers {
   std::vector<float> crit_max_vals;
   // look up table of size num_cells mapping critical cell_id to index in gradient_data.cp
   std::vector<int> fast_crit_map;
-  std::vector<int> safe_crit_map;
 
   ManagedTensor temp_flat_max;
   ManagedTensor temp_flat_min;
@@ -66,12 +65,6 @@ struct WSHelpers {
         out_ridge_vertices_off("out_ridge_vertices_off", false),
         out_arc_vertices_off("out_arc_vertices_off", false) {}
 
-  void reset() {
-    // fast_crit_map.clear();
-    // safe_crit_map.clear();
-    // crit_min_vals.clear();
-    // crit_max_vals.clear();
-  }
 };
 
 struct Workspace {
@@ -89,15 +82,6 @@ struct Workspace {
   PersistenceData p_data;
 
   Workspace(int H, int W) : H(H), W(W), Nx(W + 1), num_cells(4 * (H + 1) * (W + 1)) {}
-
-  void reset() {
-    gradient_data.reset();
-    arcs_topology.reset();
-    saddle_nodes.reset();
-    cell_groups.reset();
-    p_data.reset();
-    hlp.reset();
-  }
 
   template <bool IS_DUAL = false>
   DMSComplex complex(bool return_gradient, bool trace_max_arcs, bool trace_min_arcs, bool trace_face_groups,

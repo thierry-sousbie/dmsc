@@ -36,12 +36,5 @@ struct ArcsTopology {
   std::vector<int> min_arcs_len;  // unsorted
   std::vector<SadEvent> sorted_max_saddles;
   std::vector<SadEvent> sorted_min_saddles;
-
-  void reset() {
-    // max_arcs_len.clear();
-    // min_arcs_len.clear();
-    // sorted_max_saddles.clear();
-    // sorted_min_saddles.clear();
-  }
 };
 }  // namespace gpu

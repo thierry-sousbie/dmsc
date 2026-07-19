@@ -54,7 +54,6 @@ CriticalPoints tensors_to_critical_points(const gpu::CriticalPointsAsTensors& cp
   return cp;
 }
 
-// TODO: we don t need to return all this data, it waste time, remove it at some point
 template <bool IS_DUAL = false, typename Workspace>
 void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
   RECORD_FUNCTION("compute_gradient_and_crit_points_gpu", {});
@@ -63,10 +62,9 @@ void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
   int Nx = W + 1;
   int num_cells = ws.num_cells;
 
-  // Allocate PyTorch Tensors on MPS
-  ws.d_data = scalar_field.to(torch::kMPS).contiguous();
+  ws.d_data = scalar_field.contiguous();
   auto opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS);
-  torch::Tensor d_paired_with = ws.gradient_data.d_paired_with.request_full({num_cells}, opts, -1);
+  torch::Tensor d_paired_with = ws.gradient_data.d_paired_with.request({num_cells}, opts);
 
   {
     RECORD_FUNCTION("KERNEL_GRADIENT", {});
@@ -78,13 +76,11 @@ void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
     auto cpt = launch_extract_critical_points_metal(d_paired_with, H, W, Nx);
     ws.gradient_data.cp = tensors_to_critical_points(cpt);
 
-    // Push critical points to GPU natively
     ws.gradient_data.d_maxes.copy_from_tensor(cpt.maxes, opts);
     ws.gradient_data.d_mins.copy_from_tensor(cpt.mins, opts);
     ws.gradient_data.d_saddles.copy_from_tensor(cpt.saddles, opts);
   }
 
-  // update fast_crit_map and other helpers (CPU)
   torch::Tensor scalar_field_cpu = ws.d_data.cpu();
   cpu::update_gradient_helpers<IS_DUAL>(ws, scalar_field_cpu.data_ptr<float>());
 }
