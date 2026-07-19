@@ -1,4 +1,5 @@
 import ctypes
+import json
 import multiprocessing
 import os
 import statistics
@@ -44,7 +45,7 @@ def suppress_c_stdout():
 
 
 def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_profiler=False, is_batched=False, **kwargs):
-    """Runs a warmup, measures it, averages hot runs, and optionally profiles."""
+    """Run a warmup followed by timed extraction and optional profiling."""
 
     # Warmup
     warmup_start = time.perf_counter()
@@ -76,7 +77,7 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
 
         # Calculate Average time PER IMAGE
         batch_time_ms = (end - start) * 1000
-        times_ms = [batch_time_ms / num_runs] * num_runs  # Hack to make the avg_time math identical
+        times_ms = [batch_time_ms / num_runs]
 
         for res in res_list:
             total_crit_pts += len(res.max_pts) + len(res.min_pts) + len(res.sad_pts)
@@ -98,11 +99,16 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
             total_crit_pts += len(res.max_pts) + len(res.min_pts) + len(res.sad_pts)
 
     # 3. Stats Output
-    avg_time = sum(times_ms) / num_runs
-    std_time = statistics.stdev(times_ms) if num_runs > 1 and not is_batched else 0.0
+    avg_time = statistics.mean(times_ms)
+    median_time = statistics.median(times_ms)
+    std_time = statistics.stdev(times_ms) if len(times_ms) > 1 else None
     avg_crit = total_crit_pts // num_runs
 
-    print(f"{name:<30} | {warmup_ms:>8.2f} ms | {avg_time:>7.2f} ± {std_time:>5.2f} ms | {avg_crit:>12} pts")
+    spread = f"{std_time:5.2f}" if std_time is not None else "  n/a"
+    print(
+        f"{name:<30} | {warmup_ms:>8.2f} ms | {avg_time:>7.2f} ± {spread} ms"
+        f" | {median_time:>7.2f} ms | {avg_crit:>12} pts"
+    )
 
     # 4. Profiler Pass
     if run_profiler:
@@ -125,6 +131,18 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
         prof.export_chrome_trace(trace_filename)
         print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=30))
 
+    return {
+        "configuration": name,
+        "threshold": threshold,
+        "warmup_ms": warmup_ms,
+        "times_ms": times_ms,
+        "mean_ms": avg_time,
+        "median_ms": median_time,
+        "std_ms": std_time,
+        "critical_points": avg_crit,
+        "batch_size": num_runs if is_batched else 1,
+    }
+
 
 def run_all_benchmarks(
     enable_profiler=False,
@@ -137,6 +155,8 @@ def run_all_benchmarks(
     test_batches=True,
     num_threads=None,
     resolution=None,
+    seed=1234,
+    output_json=None,
 ):
     if resolution is None:
         resolution = 2048
@@ -148,7 +168,8 @@ def run_all_benchmarks(
     if num_threads is None or num_threads < 0:
         num_threads = multiprocessing.cpu_count()
 
-    print(f"Generating {H}x{W} noisy landscape...")
+    torch.manual_seed(seed)
+    print(f"Generating {H}x{W} noisy landscape (seed={seed})...")
     img_cpu = generate_noisy_landscape(H, W, z_scale=1.0)
 
     if torch.cuda.is_available():
@@ -160,20 +181,27 @@ def run_all_benchmarks(
 
     img_gpu = img_cpu.to(device)
     thresholds = [0.0, 0.25]
-    # thresholds = [0.25]
+    results = []
+
+    def record(*args, **kwargs):
+        result = benchmark_extraction(*args, **kwargs)
+        results.append(result)
 
     for t in thresholds:
         print(f"\n{'=' * 85}")
         opt_str = f"{trace_valleys=}, {trace_ridges=}, {trace_peaks=}, {trace_basins=}"
         print(f" BENCHMARK({opt_str}): Persistence Threshold = {t}")
         print(f"{'=' * 85}")
-        print(f"{'Configuration':<30} | {'Warmup':>11} | {'Hot (Avg ± Std) / image':>24} | {'Avg Crit Pts':>16}")
-        print("-" * 85)
+        print(
+            f"{'Configuration':<30} | {'Warmup':>11} | {'Hot (Mean ± Std) / image':>25}"
+            f" | {'Median':>10} | {'Avg Crit Pts':>16}"
+        )
+        print("-" * 100)
 
         if test_cpu:
             # 1. CPU Single Thread
             torch.set_num_threads(1)
-            benchmark_extraction(
+            record(
                 "CPU Seq - 1 Thread",
                 compute_dmsc,
                 img_cpu,
@@ -188,7 +216,7 @@ def run_all_benchmarks(
 
             # 2. CPU Max Threads (Sequential)
             torch.set_num_threads(num_threads)
-            benchmark_extraction(
+            record(
                 f"CPU Seq - {num_threads} Threads",
                 compute_dmsc,
                 img_cpu,
@@ -203,7 +231,7 @@ def run_all_benchmarks(
 
             # 3. CPU Max Threads (Batched)
             if test_batches:
-                benchmark_extraction(
+                record(
                     f"CPU Batch - {num_threads} Threads",
                     compute_dmsc,
                     img_cpu,
@@ -222,7 +250,7 @@ def run_all_benchmarks(
             torch.set_num_threads(num_threads)
 
             # 4. GPU (Sequential)
-            benchmark_extraction(
+            record(
                 f"GPU Seq - {device.type.upper()} Driver",
                 compute_dmsc,
                 img_gpu,
@@ -237,7 +265,7 @@ def run_all_benchmarks(
 
             # 5. GPU (Batched)
             if test_batches:
-                benchmark_extraction(
+                record(
                     f"GPU Batch - {device.type.upper()} Driver",
                     compute_dmsc,
                     img_gpu,
@@ -250,6 +278,21 @@ def run_all_benchmarks(
                     trace_peaks=trace_peaks,
                     trace_basins=trace_basins,
                 )
+
+    if output_json:
+        report = {
+            "seed": seed,
+            "resolution": [H, W],
+            "num_threads": num_threads,
+            "torch_version": str(torch.__version__),
+            "device": str(device),
+            "results": results,
+        }
+        with open(output_json, "w") as f:
+            json.dump(report, f, indent=2)
+        print(f"\nWrote benchmark results to {output_json}")
+
+    return results
 
 
 if __name__ == "__main__":
@@ -271,6 +314,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--resolution", type=int, default=2048, help="Image resolution")
     parser.add_argument("--num-threads", type=int, default=4, help="Number of threads to use (-1 -> max avail.)")
+    parser.add_argument("--seed", type=int, default=1234, help="Random seed used to generate the landscape")
+    parser.add_argument("--output-json", help="Write raw timings and metadata to this JSON file")
     args = parser.parse_args()
 
     run_all_benchmarks(
@@ -281,6 +326,8 @@ if __name__ == "__main__":
         trace_basins=args.trace_basins,
         num_threads=args.num_threads,
         resolution=args.resolution,
+        seed=args.seed,
+        output_json=args.output_json,
     )
     if args.profile:
         print("Visit http://ui.perfetto.dev to check your profiling results.")
