@@ -82,13 +82,16 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
     int W = scalar_field.size(1);
 
     DMSComplex result;
-    gpu::Workspace ws(H, W);
-    if (is_dual) {
-      result = extract_single_dmsc_gpu_t<true>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
-                                               trace_min_arcs, trace_max_groups, trace_min_groups, ws);
-    } else {
-      result = extract_single_dmsc_gpu_t<false>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
-                                                trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+    {
+      pybind11::gil_scoped_release release;
+      gpu::Workspace ws(H, W);
+      if (is_dual) {
+        result = extract_single_dmsc_gpu_t<true>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                                 trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+      } else {
+        result = extract_single_dmsc_gpu_t<false>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                                  trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+      }
     }
     // Cast the single struct to a generic Python object
     return pybind11::cast(result);
@@ -100,18 +103,23 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
 
     std::vector<DMSComplex> results;
     results.reserve(B);
-    gpu::Workspace ws(H, W);
+    {
+      pybind11::gil_scoped_release release;
+      gpu::Workspace ws(H, W);
 
-    // Sequentially iterate the batch dimension. (GPU kernels will max out hardware for each spatial grid)
-    for (int b = 0; b < B; ++b) {
-      torch::Tensor img = scalar_field[b];  // Shallow slice wrapper
+      // Sequentially iterate the batch dimension. (GPU kernels will max out hardware for each spatial grid)
+      for (int b = 0; b < B; ++b) {
+        torch::Tensor img = scalar_field[b];  // Shallow slice wrapper
 
-      if (is_dual) {
-        results.push_back(extract_single_dmsc_gpu_t<true>(img, persistence_threshold, return_gradient, trace_max_arcs,
-                                                          trace_min_arcs, trace_max_groups, trace_min_groups, ws));
-      } else {
-        results.push_back(extract_single_dmsc_gpu_t<false>(img, persistence_threshold, return_gradient, trace_max_arcs,
-                                                           trace_min_arcs, trace_max_groups, trace_min_groups, ws));
+        if (is_dual) {
+          results.push_back(extract_single_dmsc_gpu_t<true>(img, persistence_threshold, return_gradient,
+                                                            trace_max_arcs, trace_min_arcs, trace_max_groups,
+                                                            trace_min_groups, ws));
+        } else {
+          results.push_back(extract_single_dmsc_gpu_t<false>(img, persistence_threshold, return_gradient,
+                                                             trace_max_arcs, trace_min_arcs, trace_max_groups,
+                                                             trace_min_groups, ws));
+        }
       }
     }
 
