@@ -44,7 +44,17 @@ def suppress_c_stdout():
         os.close(devnull)
 
 
-def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_profiler=False, is_batched=False, **kwargs):
+def benchmark_extraction(
+    name,
+    func,
+    img_tensor,
+    threshold,
+    num_runs=6,
+    run_profiler=False,
+    is_batched=False,
+    batch_repeats=3,
+    **kwargs,
+):
     """Run a warmup followed by timed extraction and optional profiling."""
 
     # Warmup
@@ -65,22 +75,19 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
     total_crit_pts = 0
 
     if is_batched:
-        # Run the entire batch exactly ONCE
-        start = time.perf_counter()
-        with suppress_c_stdout():
-            res_list = func(test_tensor, threshold, **kwargs)
-            if img_tensor.device.type == "cuda":
-                torch.cuda.synchronize()
-            elif img_tensor.device.type == "mps":
-                torch.mps.synchronize()
-        end = time.perf_counter()
+        for _ in range(batch_repeats):
+            start = time.perf_counter()
+            with suppress_c_stdout():
+                res_list = func(test_tensor, threshold, **kwargs)
+                if img_tensor.device.type == "cuda":
+                    torch.cuda.synchronize()
+                elif img_tensor.device.type == "mps":
+                    torch.mps.synchronize()
+            end = time.perf_counter()
 
-        # Calculate Average time PER IMAGE
-        batch_time_ms = (end - start) * 1000
-        times_ms = [batch_time_ms / num_runs]
-
-        for res in res_list:
-            total_crit_pts += len(res.max_pts) + len(res.min_pts) + len(res.sad_pts)
+            times_ms.append((end - start) * 1000 / num_runs)
+            for res in res_list:
+                total_crit_pts += len(res.max_pts) + len(res.min_pts) + len(res.sad_pts)
     else:
         # Standard sequential runs - explicitly prevent memory recycling to ensure fair comparison
         res_list = []
@@ -102,7 +109,8 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
     avg_time = statistics.mean(times_ms)
     median_time = statistics.median(times_ms)
     std_time = statistics.stdev(times_ms) if len(times_ms) > 1 else None
-    avg_crit = total_crit_pts // num_runs
+    measured_images = num_runs * (batch_repeats if is_batched else 1)
+    avg_crit = total_crit_pts // measured_images
 
     spread = f"{std_time:5.2f}" if std_time is not None else "  n/a"
     print(
@@ -141,6 +149,7 @@ def benchmark_extraction(name, func, img_tensor, threshold, num_runs=6, run_prof
         "std_ms": std_time,
         "critical_points": avg_crit,
         "batch_size": num_runs if is_batched else 1,
+        "batch_repeats": batch_repeats if is_batched else None,
     }
 
 
