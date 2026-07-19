@@ -618,22 +618,9 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
       [evalEncoder dispatchThreadgroups:tpg_eval threadsPerThreadgroup:tpt];
       [evalEncoder endEncoding];
 
-      [evalBuffer commit];
-      [evalBuffer waitUntilCompleted];
-
-      int ready = ((int*)d_ready_count.contents)[0];
-
-      // printf("[Metal] Iteration %d: Found %d ready pairs\n", iteration, ready);
-
-      if (ready == 0) {
-        break;
-      }
-
-      // ---------------------------------------------------------
-      // KERNEL 2: CONTRACT
-      // ---------------------------------------------------------
-      id<MTLCommandBuffer> contractBuffer = [g_ctx.commandQueue commandBuffer];
-      id<MTLComputeCommandEncoder> contractEncoder = [contractBuffer computeCommandEncoder];
+      // Evaluation and contraction are ordered in the same command buffer.
+      // Contraction reads the device-side ready count, avoiding a host wait.
+      id<MTLComputeCommandEncoder> contractEncoder = [evalBuffer computeCommandEncoder];
       [contractEncoder setComputePipelineState:g_ctx.contract_simplification_pipeline];
 
       [contractEncoder setBuffer:d_ready_list offset:0 atIndex:0];
@@ -649,16 +636,19 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
       [contractEncoder setBuffer:getMTLBufferStorage(d_alive) offset:0 atIndex:10];
       [contractEncoder setBuffer:getMTLBufferStorage(d_pending) offset:0 atIndex:11];
 
-      [contractEncoder setBytes:&ready length:sizeof(int) atIndex:12];
+      [contractEncoder setBuffer:d_ready_count offset:0 atIndex:12];
       [contractEncoder setBytes:&N2 length:sizeof(int) atIndex:13];
 
-      MTLSize tpg_contract = MTLSizeMake((ready + threads - 1) / threads, 1, 1);
+      MTLSize tpg_contract = MTLSizeMake((num_cancels + threads - 1) / threads, 1, 1);
 
       [contractEncoder dispatchThreadgroups:tpg_contract threadsPerThreadgroup:tpt];
       [contractEncoder endEncoding];
 
-      [contractBuffer commit];
-      [contractBuffer waitUntilCompleted];
+      [evalBuffer commit];
+      [evalBuffer waitUntilCompleted];
+
+      int ready = ((int*)d_ready_count.contents)[0];
+      if (ready == 0) break;
 
       // ---------------------------------------------------------
       // KERNEL 3: COMPRESS PATHS

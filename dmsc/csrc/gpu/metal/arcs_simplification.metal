@@ -103,8 +103,10 @@ kernel void contract_cancellations_metal(
     const device int* init_t [[buffer(4)]], const device int* base_lens [[buffer(5)]],
     device int* parent_ptrs [[buffer(6)]], device PathRef* weights [[buffer(7)]], device DAGNode* dag [[buffer(8)]],
     device atomic_int* dag_sz [[buffer(9)]], device uint8_t* alive [[buffer(10)]],
-    device uint8_t* pending [[buffer(11)]], constant int& num_ready [[buffer(12)]], constant int& N2 [[buffer(13)]],
+    device uint8_t* pending [[buffer(11)]], const device atomic_int* ready_count [[buffer(12)]],
+    constant int& N2 [[buffer(13)]],
     uint id [[thread_position_in_grid]]) {
+  int num_ready = atomic_load_explicit(ready_count, memory_order_relaxed);
   if (id >= (uint)num_ready) return;
 
   int cancel_idx = ready_list[id];
