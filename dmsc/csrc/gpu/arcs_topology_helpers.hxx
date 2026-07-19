@@ -25,13 +25,6 @@ struct TracedSaddlesTensors {
   torch::Tensor min_len;
 };
 
-// struct TracedSaddlesVectors {
-//   std::vector<SadEvent> sorted_max_saddles;
-//   std::vector<SadEvent> sorted_min_saddles;
-//   std::vector<int> max_arcs_len;
-//   std::vector<int> min_arcs_len;
-// };
-
 // IMPORTANT: The simulation of simplicity convention here is exactly the same as the one defined in
 // SadEventLess{} / SadEventGreater{} when descending is True / False.
 torch::Tensor get_packed_sort_indices(const torch::Tensor& s_vals, const torch::Tensor& saddles,

@@ -123,11 +123,14 @@ void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_verte
   torch::Tensor d_crit_mins = gdata.d_mins.get();
   torch::Tensor d_crit_saddles = gdata.d_saddles.get();
 
-  torch::Tensor d_fast_crit_map = torch::full({num_cells}, -1, i_opts);
-  if (num_crit_maxes > 0) d_fast_crit_map.index_put_({d_crit_maxes}, torch::arange((long)num_crit_maxes, i_opts));
-  if (num_crit_mins > 0) d_fast_crit_map.index_put_({d_crit_mins}, torch::arange((long)num_crit_mins, i_opts));
-  if (d_crit_saddles.numel() > 0)
-    d_fast_crit_map.index_put_({d_crit_saddles}, torch::arange((long)d_crit_saddles.numel(), i_opts));
+  torch::Tensor d_fast_crit_map = ws.d_fast_crit_map;
+  if (!d_fast_crit_map.defined()) {
+    d_fast_crit_map = torch::full({num_cells}, -1, i_opts);
+    if (num_crit_maxes > 0) d_fast_crit_map.index_put_({d_crit_maxes}, torch::arange((long)num_crit_maxes, i_opts));
+    if (num_crit_mins > 0) d_fast_crit_map.index_put_({d_crit_mins}, torch::arange((long)num_crit_mins, i_opts));
+    if (d_crit_saddles.numel() > 0)
+      d_fast_crit_map.index_put_({d_crit_saddles}, torch::arange((long)d_crit_saddles.numel(), i_opts));
+  }
 
   torch::Tensor d_uf_max_parent = torch::from_blob((void*)uf_max.parent.data(), {(long)num_crit_maxes}, torch::kInt32)
                                       .to(dev, /*non_blocking=*/true);
@@ -191,8 +194,9 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   const auto& max_arcs_len = ws.arcs_topology.max_arcs_len;
   const auto& min_arcs_len = ws.arcs_topology.min_arcs_len;
 
-  torch::Tensor d_fast_crit_map = torch::from_blob((void*)ws.hlp.fast_crit_map.data(), {num_cells}, torch::kInt32)
-                                      .to(torch::kMPS, /*non_blocking=*/true);
+  ws.d_fast_crit_map = torch::from_blob((void*)ws.hlp.fast_crit_map.data(), {num_cells}, torch::kInt32)
+                           .to(torch::kMPS, /*non_blocking=*/true);
+  torch::Tensor d_fast_crit_map = ws.d_fast_crit_map;
 
   auto& out = ws.saddle_nodes;
   int num_saddles = max_arcs_len.size() / 2;

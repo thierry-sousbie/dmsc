@@ -79,6 +79,7 @@ struct Workspace {
   WSHelpers hlp;
 
   torch::Tensor d_data;  // hold a copy of the input scalar field
+  torch::Tensor d_fast_crit_map;
   gpu::GradientData gradient_data;
   gpu::ArcsTopology arcs_topology;
   gpu::SaddleNodes saddle_nodes;
