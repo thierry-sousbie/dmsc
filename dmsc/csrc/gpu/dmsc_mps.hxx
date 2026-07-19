@@ -100,7 +100,6 @@ void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_verte
   const auto& min_alive = ws.p_data.min_alive;
   const auto& crit_maxes = ws.gradient_data.cp.maxes;
   const auto& crit_mins = ws.gradient_data.cp.mins;
-  const auto& fast_crit_map = ws.hlp.fast_crit_map;
   size_t num_crit_maxes = crit_maxes.size();
   size_t num_crit_mins = crit_mins.size();
 
