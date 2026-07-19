@@ -2,6 +2,10 @@
 #include <pybind11/stl.h>
 #include <tbb/global_control.h>
 
+#include <algorithm>
+#include <array>
+#include <future>
+#include <memory>
 #include <vector>
 
 #include "./cpu/dmsc_impl.hxx"
@@ -10,6 +14,28 @@
 #include "./input_validation.hxx"
 
 using namespace gpu;
+
+template <bool IS_DUAL, typename Workspace>
+void prepare_single_dmsc_gpu(torch::Tensor scalar_field, bool trace_max_arcs, bool trace_min_arcs, Workspace& ws) {
+  gpu::compute_gradient<IS_DUAL>(ws, scalar_field);
+  gpu::trace_from_saddles<IS_DUAL>(ws);
+  if (trace_max_arcs || trace_min_arcs) {
+    gpu::trace_raw_arcs_geometry(ws, trace_max_arcs, trace_min_arcs);
+  }
+}
+
+template <bool IS_DUAL, typename Workspace>
+DMSComplex finalize_single_dmsc_gpu(bool return_gradient, bool trace_max_arcs, bool trace_min_arcs,
+                                    bool trace_max_groups, bool trace_min_groups, Workspace& ws) {
+  if (trace_max_arcs || trace_min_arcs) {
+    gpu::simplify_arcs_geometry(ws, trace_max_arcs, trace_min_arcs);
+  }
+  if (trace_max_groups || trace_min_groups) {
+    gpu::compute_cell_groups<IS_DUAL>(ws, trace_max_groups, trace_min_groups);
+  }
+  return ws.template complex<IS_DUAL>(return_gradient, trace_max_arcs, trace_min_arcs, trace_max_groups,
+                                      trace_min_groups);
+}
 
 /*
 Physical Geometry   cell_type Topology (IS_DUAL=false)  Topology (IS_DUAL=true)
@@ -47,21 +73,56 @@ DMSComplex extract_single_dmsc_gpu_t(torch::Tensor scalar_field, float persisten
     std::swap(trace_max_groups, trace_min_groups);
   }
 
-  gpu::compute_gradient<IS_DUAL>(ws, scalar_field);
-
-  gpu::trace_from_saddles<IS_DUAL>(ws);
-  bool trace_any_arcs = trace_max_arcs || trace_min_arcs;
-  if (trace_any_arcs) gpu::trace_raw_arcs_geometry(ws, trace_max_arcs, trace_min_arcs);
+  prepare_single_dmsc_gpu<IS_DUAL>(scalar_field, trace_max_arcs, trace_min_arcs, ws);
 
   cpu::compute_ppairs_and_simplify<IS_DUAL>(ws, persistence_threshold, trace_max_arcs, trace_min_arcs);
 
-  if (trace_any_arcs) gpu::simplify_arcs_geometry(ws, trace_max_arcs, trace_min_arcs);
+  return finalize_single_dmsc_gpu<IS_DUAL>(return_gradient, trace_max_arcs, trace_min_arcs, trace_max_groups,
+                                           trace_min_groups, ws);
+}
 
-  if (trace_max_groups || trace_min_groups) {
-    gpu::compute_cell_groups<IS_DUAL>(ws, trace_max_groups, trace_min_groups);
+template <bool IS_DUAL>
+void extract_batched_dmsc_gpu(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient,
+                              bool trace_max_arcs, bool trace_min_arcs, bool trace_max_groups, bool trace_min_groups,
+                              std::vector<DMSComplex>& results) {
+  if (IS_DUAL) {
+    std::swap(trace_max_arcs, trace_min_arcs);
+    std::swap(trace_max_groups, trace_min_groups);
   }
 
-  return ws.complex<IS_DUAL>(return_gradient, trace_max_arcs, trace_min_arcs, trace_max_groups, trace_min_groups);
+  struct PipelineSlot {
+    std::unique_ptr<gpu::Workspace> workspace;
+    std::future<void> persistence;
+    int image_index = -1;
+  };
+
+  int H = scalar_field.size(1);
+  int W = scalar_field.size(2);
+  std::array<PipelineSlot, 2> slots;
+  for (auto& slot : slots) slot.workspace = std::make_unique<gpu::Workspace>(H, W);
+
+  auto finalize_slot = [&](PipelineSlot& slot) {
+    if (slot.image_index < 0) return;
+    slot.persistence.get();
+    results[slot.image_index] =
+        finalize_single_dmsc_gpu<IS_DUAL>(return_gradient, trace_max_arcs, trace_min_arcs, trace_max_groups,
+                                          trace_min_groups, *slot.workspace);
+    slot.image_index = -1;
+  };
+
+  for (int b = 0; b < scalar_field.size(0); ++b) {
+    PipelineSlot& slot = slots[b % slots.size()];
+    finalize_slot(slot);
+
+    prepare_single_dmsc_gpu<IS_DUAL>(scalar_field[b], trace_max_arcs, trace_min_arcs, *slot.workspace);
+    slot.image_index = b;
+    gpu::Workspace* workspace = slot.workspace.get();
+    slot.persistence = std::async(std::launch::async, [=]() {
+      cpu::compute_ppairs_and_simplify<IS_DUAL>(*workspace, persistence_threshold, trace_max_arcs, trace_min_arcs);
+    });
+  }
+
+  for (auto& slot : slots) finalize_slot(slot);
 }
 
 pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient = false,
@@ -98,28 +159,17 @@ pybind11::object extract_dmsc_gpu(torch::Tensor scalar_field, float persistence_
   } else {
     // 3D Batched case
     int B = scalar_field.size(0);
-    int H = scalar_field.size(1);
-    int W = scalar_field.size(2);
 
-    std::vector<DMSComplex> results;
-    results.reserve(B);
+    std::vector<DMSComplex> results(B);
     {
       pybind11::gil_scoped_release release;
-      gpu::Workspace ws(H, W);
-
-      // Sequentially iterate the batch dimension. (GPU kernels will max out hardware for each spatial grid)
-      for (int b = 0; b < B; ++b) {
-        torch::Tensor img = scalar_field[b];  // Shallow slice wrapper
-
-        if (is_dual) {
-          results.push_back(extract_single_dmsc_gpu_t<true>(img, persistence_threshold, return_gradient,
-                                                            trace_max_arcs, trace_min_arcs, trace_max_groups,
-                                                            trace_min_groups, ws));
-        } else {
-          results.push_back(extract_single_dmsc_gpu_t<false>(img, persistence_threshold, return_gradient,
-                                                             trace_max_arcs, trace_min_arcs, trace_max_groups,
-                                                             trace_min_groups, ws));
-        }
+      tbb::global_control control(tbb::global_control::max_allowed_parallelism, at::get_num_threads());
+      if (is_dual) {
+        extract_batched_dmsc_gpu<true>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                       trace_min_arcs, trace_max_groups, trace_min_groups, results);
+      } else {
+        extract_batched_dmsc_gpu<false>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                        trace_min_arcs, trace_max_groups, trace_min_groups, results);
       }
     }
 
