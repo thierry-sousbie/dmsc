@@ -7,6 +7,7 @@
 
 #include "./cpu/dmsc_impl.hxx"
 #include "./dmsc_struct.hxx"
+#include "./input_validation.hxx"
 
 using namespace cpu;
 
@@ -29,10 +30,6 @@ template <bool IS_DUAL = false>
 DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient,
                                      bool trace_max_arcs, bool trace_min_arcs, bool trace_max_groups,
                                      bool trace_min_groups, cpu::Workspace& ws) {
-  int H = ws.H;
-  int W = ws.W;
-  ws.reset();
-
   tbb::global_control control(tbb::global_control::max_allowed_parallelism, at::get_num_threads());
   if (IS_DUAL) {
     std::swap(trace_max_arcs, trace_min_arcs);
@@ -56,7 +53,8 @@ DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persisten
 pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient = false,
                                   bool is_dual = false, bool trace_max_arcs = false, bool trace_min_arcs = false,
                                   bool trace_max_groups = false, bool trace_min_groups = false) {
-  TORCH_CHECK(scalar_field.dim() == 2 || scalar_field.dim() == 3, "Input tensor must be 2D [H, W] or 3D [B, H, W]");
+  validate_dmsc_input(scalar_field);
+  TORCH_CHECK(scalar_field.device().is_cpu(), "CPU backend requires a CPU tensor, got ", scalar_field.device());
 
   scalar_field = scalar_field.contiguous();
 
@@ -65,13 +63,16 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
     int W = scalar_field.size(1);
 
     DMSComplex result;
-    cpu::Workspace ws(H, W);
-    if (is_dual) {
-      result = extract_single_dmsc_cpu_t<true>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
-                                               trace_min_arcs, trace_max_groups, trace_min_groups, ws);
-    } else {
-      result = extract_single_dmsc_cpu_t<false>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
-                                                trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+    {
+      pybind11::gil_scoped_release release;
+      cpu::Workspace ws(H, W);
+      if (is_dual) {
+        result = extract_single_dmsc_cpu_t<true>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                                 trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+      } else {
+        result = extract_single_dmsc_cpu_t<false>(scalar_field, persistence_threshold, return_gradient, trace_max_arcs,
+                                                  trace_min_arcs, trace_max_groups, trace_min_groups, ws);
+      }
     }
 
     return pybind11::cast(result);
@@ -84,17 +85,20 @@ pybind11::object extract_dmsc_cpu(torch::Tensor scalar_field, float persistence_
 
     std::vector<DMSComplex> results;
     results.reserve(B);
-    cpu::Workspace ws(H, W);
+    {
+      pybind11::gil_scoped_release release;
+      cpu::Workspace ws(H, W);
 
-    for (int b = 0; b < B; ++b) {
-      if (is_dual) {
-        results.push_back(extract_single_dmsc_cpu_t<true>(scalar_field[b], persistence_threshold, return_gradient,
-                                                          trace_max_arcs, trace_min_arcs, trace_max_groups,
-                                                          trace_min_groups, ws));
-      } else {
-        results.push_back(extract_single_dmsc_cpu_t<false>(scalar_field[b], persistence_threshold, return_gradient,
-                                                           trace_max_arcs, trace_min_arcs, trace_max_groups,
-                                                           trace_min_groups, ws));
+      for (int b = 0; b < B; ++b) {
+        if (is_dual) {
+          results.push_back(extract_single_dmsc_cpu_t<true>(scalar_field[b], persistence_threshold, return_gradient,
+                                                            trace_max_arcs, trace_min_arcs, trace_max_groups,
+                                                            trace_min_groups, ws));
+        } else {
+          results.push_back(extract_single_dmsc_cpu_t<false>(scalar_field[b], persistence_threshold, return_gradient,
+                                                             trace_max_arcs, trace_min_arcs, trace_max_groups,
+                                                             trace_min_groups, ws));
+        }
       }
     }
 

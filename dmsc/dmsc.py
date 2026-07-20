@@ -159,7 +159,7 @@ class MSComplex:
         return iter(astuple(self))
 
     def plot(self, img, ms_other=None, name="", name_other="Other", title=None, filename=None):
-        """Generates a complete dashboard of the MS complex. If ms_other is provided, it plots a side-by-side comparison."""
+        """Generate an MS complex dashboard, optionally comparing another complex."""
         from .plots import create_dashboard
 
         return create_dashboard(
@@ -244,6 +244,14 @@ def compute_dmsc(
     """
     if img.dim() not in (2, 3):
         raise ValueError(f"Input tensor must be 2D [H, W] or 3D [B, H, W]. Got {img.dim()}D.")
+    if img.layout != torch.strided:
+        raise ValueError(f"Input tensor must use strided layout. Got {img.layout}.")
+    if img.dtype != torch.float32:
+        raise TypeError(f"Input tensor must have dtype torch.float32. Got {img.dtype}.")
+    if img.dim() == 3 and img.shape[0] == 0:
+        raise ValueError("Batch dimension must be non-empty.")
+    if img.shape[-2] == 0 or img.shape[-1] == 0:
+        raise ValueError(f"Spatial dimensions must be non-empty. Got {tuple(img.shape[-2:])}.")
 
     start_time = time.perf_counter()
     # The C++ unified API automatically handles both single and batched layouts

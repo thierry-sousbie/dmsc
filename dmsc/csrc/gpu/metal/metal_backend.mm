@@ -244,7 +244,6 @@ gpu::CriticalPointsAsTensors launch_extract_critical_points_metal(torch::Tensor 
     torch::Tensor d_faces = torch::empty({(long)max_expected}, opts);
     torch::Tensor d_counters = torch::empty({3}, opts);
 
-    at::mps::getDefaultMPSStream()->synchronize(at::mps::SyncType::COMMIT_AND_WAIT);
     id<MTLCommandBuffer> commandBuffer = [g_ctx.commandQueue commandBuffer];
 
     // CRITICAL FIX: Initialize atomic counters to 0 natively on the GPU
@@ -318,15 +317,14 @@ TracedSaddlesTensors launch_trace_from_saddles_metal(torch::Tensor d_data, torch
     TracedSaddlesTensors out;
     out.saddles = d_saddles;
 
-    out.max_c1 = torch::full({sad_count}, -1, int_opts);
-    out.max_c2 = torch::full({sad_count}, -1, int_opts);
-    out.min_c1 = torch::full({sad_count}, -1, int_opts);
-    out.min_c2 = torch::full({sad_count}, -1, int_opts);
-    out.s_vals = torch::full({sad_count}, -1.0f, float_opts);
-    out.max_len = torch::full({sad_count * 2}, 0, int_opts);
-    out.min_len = torch::full({sad_count * 2}, 0, int_opts);
+    out.max_c1 = torch::empty({sad_count}, int_opts);
+    out.max_c2 = torch::empty({sad_count}, int_opts);
+    out.min_c1 = torch::empty({sad_count}, int_opts);
+    out.min_c2 = torch::empty({sad_count}, int_opts);
+    out.s_vals = torch::empty({sad_count}, float_opts);
+    out.max_len = torch::empty({sad_count * 2}, int_opts);
+    out.min_len = torch::empty({sad_count * 2}, int_opts);
 
-    at::mps::getDefaultMPSStream()->synchronize(at::mps::SyncType::COMMIT_AND_WAIT);
     id<MTLCommandBuffer> commandBuffer = [g_ctx.commandQueue commandBuffer];
 
     // Bypass PyTorch's lazy allocator entirely. Create a raw Metal buffer
@@ -572,6 +570,8 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
     at::mps::getDefaultMPSStream()->synchronize(at::mps::SyncType::COMMIT_AND_WAIT);
 
     id<MTLBuffer> d_ready_count = [g_ctx.device newBufferWithLength:sizeof(int) options:MTLResourceStorageModeShared];
+    id<MTLBuffer> d_second_changed = [g_ctx.device newBufferWithLength:sizeof(int)
+                                                               options:MTLResourceStorageModeShared];
     id<MTLBuffer> mtl_dag_sz = [g_ctx.device newBufferWithLength:sizeof(int) options:MTLResourceStorageModeShared];
 
     ((int*)mtl_dag_sz.contents)[0] = *host_dag_sz;
@@ -620,22 +620,9 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
       [evalEncoder dispatchThreadgroups:tpg_eval threadsPerThreadgroup:tpt];
       [evalEncoder endEncoding];
 
-      [evalBuffer commit];
-      [evalBuffer waitUntilCompleted];
-
-      int ready = ((int*)d_ready_count.contents)[0];
-
-      // printf("[Metal] Iteration %d: Found %d ready pairs\n", iteration, ready);
-
-      if (ready == 0) {
-        break;
-      }
-
-      // ---------------------------------------------------------
-      // KERNEL 2: CONTRACT
-      // ---------------------------------------------------------
-      id<MTLCommandBuffer> contractBuffer = [g_ctx.commandQueue commandBuffer];
-      id<MTLComputeCommandEncoder> contractEncoder = [contractBuffer computeCommandEncoder];
+      // Evaluation and contraction are ordered in the same command buffer.
+      // Contraction reads the device-side ready count, avoiding a host wait.
+      id<MTLComputeCommandEncoder> contractEncoder = [evalBuffer computeCommandEncoder];
       [contractEncoder setComputePipelineState:g_ctx.contract_simplification_pipeline];
 
       [contractEncoder setBuffer:d_ready_list offset:0 atIndex:0];
@@ -651,77 +638,63 @@ void launch_simplify_arcs_metal(torch::Tensor d_cancels, torch::Tensor d_init_t,
       [contractEncoder setBuffer:getMTLBufferStorage(d_alive) offset:0 atIndex:10];
       [contractEncoder setBuffer:getMTLBufferStorage(d_pending) offset:0 atIndex:11];
 
-      [contractEncoder setBytes:&ready length:sizeof(int) atIndex:12];
+      [contractEncoder setBuffer:d_ready_count offset:0 atIndex:12];
       [contractEncoder setBytes:&N2 length:sizeof(int) atIndex:13];
 
-      MTLSize tpg_contract = MTLSizeMake((ready + threads - 1) / threads, 1, 1);
+      MTLSize tpg_contract = MTLSizeMake((num_cancels + threads - 1) / threads, 1, 1);
 
       [contractEncoder dispatchThreadgroups:tpg_contract threadsPerThreadgroup:tpt];
       [contractEncoder endEncoding];
 
-      [contractBuffer commit];
-      [contractBuffer waitUntilCompleted];
+      [evalBuffer commit];
+      [evalBuffer waitUntilCompleted];
+
+      int ready = ((int*)d_ready_count.contents)[0];
+      if (ready == 0) break;
 
       // ---------------------------------------------------------
       // KERNEL 3: COMPRESS PATHS
       // ---------------------------------------------------------
-      bool use_alt = false;
       int pass = 0;
       MTLSize tpg_comp = MTLSizeMake((num_extrema + threads - 1) / threads, 1, 1);
 
       while (pass < 32) {
-        ((int*)d_ready_count.contents)[0] = 0;  // Use ready_count as 'changed' flag
+        ((int*)d_ready_count.contents)[0] = 0;
+        ((int*)d_second_changed.contents)[0] = 0;
 
         id<MTLCommandBuffer> compBuffer = [g_ctx.commandQueue commandBuffer];
-        id<MTLComputeCommandEncoder> compEncoder = [compBuffer computeCommandEncoder];
-        [compEncoder setComputePipelineState:g_ctx.compress_paths_pipeline];
+        for (int subpass = 0; subpass < 2; ++subpass) {
+          id<MTLComputeCommandEncoder> compEncoder = [compBuffer computeCommandEncoder];
+          [compEncoder setComputePipelineState:g_ctx.compress_paths_pipeline];
 
-        id<MTLBuffer> p_in = use_alt ? d_temp_parents : getMTLBufferStorage(d_parent_ptrs);
-        id<MTLBuffer> w_in = use_alt ? d_temp_weights : getMTLBufferStorage(d_weights);
-        id<MTLBuffer> p_out = use_alt ? getMTLBufferStorage(d_parent_ptrs) : d_temp_parents;
-        id<MTLBuffer> w_out = use_alt ? getMTLBufferStorage(d_weights) : d_temp_weights;
+          bool use_alt = subpass != 0;
+          id<MTLBuffer> p_in = use_alt ? d_temp_parents : getMTLBufferStorage(d_parent_ptrs);
+          id<MTLBuffer> w_in = use_alt ? d_temp_weights : getMTLBufferStorage(d_weights);
+          id<MTLBuffer> p_out = use_alt ? getMTLBufferStorage(d_parent_ptrs) : d_temp_parents;
+          id<MTLBuffer> w_out = use_alt ? getMTLBufferStorage(d_weights) : d_temp_weights;
 
-        [compEncoder setBuffer:p_in offset:0 atIndex:0];
-        [compEncoder setBuffer:w_in offset:0 atIndex:1];
-        [compEncoder setBuffer:p_out offset:0 atIndex:2];
-        [compEncoder setBuffer:w_out offset:0 atIndex:3];
-        [compEncoder setBuffer:getMTLBufferStorage(d_dag) offset:0 atIndex:4];
-        [compEncoder setBuffer:mtl_dag_sz offset:0 atIndex:5];
-        [compEncoder setBuffer:getMTLBufferStorage(d_base_lens) offset:0 atIndex:6];
-        [compEncoder setBuffer:d_ready_count offset:0 atIndex:7];
-        [compEncoder setBytes:&num_extrema length:sizeof(int) atIndex:8];
-        [compEncoder setBytes:&N2 length:sizeof(int) atIndex:9];
+          [compEncoder setBuffer:p_in offset:0 atIndex:0];
+          [compEncoder setBuffer:w_in offset:0 atIndex:1];
+          [compEncoder setBuffer:p_out offset:0 atIndex:2];
+          [compEncoder setBuffer:w_out offset:0 atIndex:3];
+          [compEncoder setBuffer:getMTLBufferStorage(d_dag) offset:0 atIndex:4];
+          [compEncoder setBuffer:mtl_dag_sz offset:0 atIndex:5];
+          [compEncoder setBuffer:getMTLBufferStorage(d_base_lens) offset:0 atIndex:6];
+          [compEncoder setBuffer:use_alt ? d_second_changed : d_ready_count offset:0 atIndex:7];
+          [compEncoder setBytes:&num_extrema length:sizeof(int) atIndex:8];
+          [compEncoder setBytes:&N2 length:sizeof(int) atIndex:9];
 
-        [compEncoder dispatchThreadgroups:tpg_comp threadsPerThreadgroup:tpt];
-        [compEncoder endEncoding];
+          [compEncoder dispatchThreadgroups:tpg_comp threadsPerThreadgroup:tpt];
+          [compEncoder endEncoding];
+        }
 
         [compBuffer commit];
         [compBuffer waitUntilCompleted];
 
-        use_alt = !use_alt;
-        pass++;
+        pass += 2;
 
-        int changed = ((int*)d_ready_count.contents)[0];
+        int changed = ((int*)d_second_changed.contents)[0];
         if (changed == 0) break;
-      }
-
-      // If final data is in alt buffers, copy back to primary PyTorch tensors
-      if (use_alt) {
-        id<MTLCommandBuffer> copyBuffer = [g_ctx.commandQueue commandBuffer];
-        id<MTLBlitCommandEncoder> blitEncoder = [copyBuffer blitCommandEncoder];
-        [blitEncoder copyFromBuffer:d_temp_parents
-                       sourceOffset:0
-                           toBuffer:getMTLBufferStorage(d_parent_ptrs)
-                  destinationOffset:d_parent_ptrs.storage_offset() * d_parent_ptrs.itemsize()
-                               size:num_extrema * sizeof(int)];
-        [blitEncoder copyFromBuffer:d_temp_weights
-                       sourceOffset:0
-                           toBuffer:getMTLBufferStorage(d_weights)
-                  destinationOffset:d_weights.storage_offset() * d_weights.itemsize()
-                               size:num_extrema * sizeof(uint64_t)];
-        [blitEncoder endEncoding];
-        [copyBuffer commit];
-        [copyBuffer waitUntilCompleted];
       }
 
       iteration++;

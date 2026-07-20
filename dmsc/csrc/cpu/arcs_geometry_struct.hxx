@@ -24,9 +24,5 @@ struct SaddleNodes {
   std::vector<SaddleNode> nodes;
   ManagedTensor flat_max_geom;
   ManagedTensor flat_min_geom;
-
-  void reset() {
-    // nodes.clear();
-  }
 };
 }  // namespace cpu

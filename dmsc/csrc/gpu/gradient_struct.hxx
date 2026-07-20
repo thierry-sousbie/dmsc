@@ -33,7 +33,5 @@ struct GradientData {
         d_saddles("d_saddles", false),
         d_maxes("d_maxes", false),
         d_mins("d_mins", false) {}
-
-  void reset() {}
 };
 }  // namespace gpu

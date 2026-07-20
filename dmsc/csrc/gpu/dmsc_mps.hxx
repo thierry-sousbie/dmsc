@@ -54,7 +54,6 @@ CriticalPoints tensors_to_critical_points(const gpu::CriticalPointsAsTensors& cp
   return cp;
 }
 
-// TODO: we don t need to return all this data, it waste time, remove it at some point
 template <bool IS_DUAL = false, typename Workspace>
 void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
   RECORD_FUNCTION("compute_gradient_and_crit_points_gpu", {});
@@ -63,10 +62,9 @@ void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
   int Nx = W + 1;
   int num_cells = ws.num_cells;
 
-  // Allocate PyTorch Tensors on MPS
-  ws.d_data = scalar_field.to(torch::kMPS).contiguous();
+  ws.d_data = scalar_field.contiguous();
   auto opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS);
-  torch::Tensor d_paired_with = ws.gradient_data.d_paired_with.request_full({num_cells}, opts, -1);
+  torch::Tensor d_paired_with = ws.gradient_data.d_paired_with.request({num_cells}, opts);
 
   {
     RECORD_FUNCTION("KERNEL_GRADIENT", {});
@@ -78,13 +76,11 @@ void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
     auto cpt = launch_extract_critical_points_metal(d_paired_with, H, W, Nx);
     ws.gradient_data.cp = tensors_to_critical_points(cpt);
 
-    // Push critical points to GPU natively
     ws.gradient_data.d_maxes.copy_from_tensor(cpt.maxes, opts);
     ws.gradient_data.d_mins.copy_from_tensor(cpt.mins, opts);
     ws.gradient_data.d_saddles.copy_from_tensor(cpt.saddles, opts);
   }
 
-  // update fast_crit_map and other helpers (CPU)
   torch::Tensor scalar_field_cpu = ws.d_data.cpu();
   cpu::update_gradient_helpers<IS_DUAL>(ws, scalar_field_cpu.data_ptr<float>());
 }
@@ -104,7 +100,6 @@ void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_verte
   const auto& min_alive = ws.p_data.min_alive;
   const auto& crit_maxes = ws.gradient_data.cp.maxes;
   const auto& crit_mins = ws.gradient_data.cp.mins;
-  const auto& fast_crit_map = ws.hlp.fast_crit_map;
   size_t num_crit_maxes = crit_maxes.size();
   size_t num_crit_mins = crit_mins.size();
 
@@ -127,11 +122,14 @@ void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_verte
   torch::Tensor d_crit_mins = gdata.d_mins.get();
   torch::Tensor d_crit_saddles = gdata.d_saddles.get();
 
-  torch::Tensor d_fast_crit_map = torch::full({num_cells}, -1, i_opts);
-  if (num_crit_maxes > 0) d_fast_crit_map.index_put_({d_crit_maxes}, torch::arange((long)num_crit_maxes, i_opts));
-  if (num_crit_mins > 0) d_fast_crit_map.index_put_({d_crit_mins}, torch::arange((long)num_crit_mins, i_opts));
-  if (d_crit_saddles.numel() > 0)
-    d_fast_crit_map.index_put_({d_crit_saddles}, torch::arange((long)d_crit_saddles.numel(), i_opts));
+  torch::Tensor d_fast_crit_map = ws.d_fast_crit_map;
+  if (!d_fast_crit_map.defined()) {
+    d_fast_crit_map = torch::full({num_cells}, -1, i_opts);
+    if (num_crit_maxes > 0) d_fast_crit_map.index_put_({d_crit_maxes}, torch::arange((long)num_crit_maxes, i_opts));
+    if (num_crit_mins > 0) d_fast_crit_map.index_put_({d_crit_mins}, torch::arange((long)num_crit_mins, i_opts));
+    if (d_crit_saddles.numel() > 0)
+      d_fast_crit_map.index_put_({d_crit_saddles}, torch::arange((long)d_crit_saddles.numel(), i_opts));
+  }
 
   torch::Tensor d_uf_max_parent = torch::from_blob((void*)uf_max.parent.data(), {(long)num_crit_maxes}, torch::kInt32)
                                       .to(dev, /*non_blocking=*/true);
@@ -195,8 +193,9 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   const auto& max_arcs_len = ws.arcs_topology.max_arcs_len;
   const auto& min_arcs_len = ws.arcs_topology.min_arcs_len;
 
-  torch::Tensor d_fast_crit_map = torch::from_blob((void*)ws.hlp.fast_crit_map.data(), {num_cells}, torch::kInt32)
-                                      .to(torch::kMPS, /*non_blocking=*/true);
+  ws.d_fast_crit_map = torch::from_blob((void*)ws.hlp.fast_crit_map.data(), {num_cells}, torch::kInt32)
+                           .to(torch::kMPS, /*non_blocking=*/true);
+  torch::Tensor d_fast_crit_map = ws.d_fast_crit_map;
 
   auto& out = ws.saddle_nodes;
   int num_saddles = max_arcs_len.size() / 2;

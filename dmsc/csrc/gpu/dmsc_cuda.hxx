@@ -25,6 +25,8 @@
 #define MAX_DAG_ALLOC_PER_PAIR_GPU 15
 
 void launch_gradient_cuda(const float* data, int* paired_with, int H, int W, bool is_dual);
+torch::Tensor launch_gather_critical_values_cuda(const torch::Tensor& data, const torch::Tensor& cell_ids, int H, int W,
+                                                 int Nx, bool faces, bool is_dual);
 gpu::CriticalPointsAsTensors launch_extract_critical_points_cuda(const int* d_paired_with, int H, int W, int Nx);
 void launch_cell_groups_cuda(const float* data, const int* paired_with, const int* fast_crit_map, const int* uf_parent,
                              const int* crits, const int* fast_region_id, int* out_groups, int H, int W, int Nx,
@@ -80,14 +82,18 @@ void compute_gradient(Workspace& ws, const torch::Tensor& scalar_field) {
   auto cpt = launch_extract_critical_points_cuda(d_paired_with.data_ptr<int>(), H, W, Nx);
   ws.gradient_data.cp = tensors_to_critical_points(cpt);
 
-  // Push critical points to GPU natively
   ws.gradient_data.d_maxes.copy_from_tensor(cpt.maxes, opts);
   ws.gradient_data.d_mins.copy_from_tensor(cpt.mins, opts);
   ws.gradient_data.d_saddles.copy_from_tensor(cpt.saddles, opts);
 
-  // update fast_crit_map and other helpers (CPU)
-  torch::Tensor scalar_field_cpu = ws.d_data.cpu();
-  cpu::update_gradient_helpers<IS_DUAL>(ws, scalar_field_cpu.data_ptr<float>());
+  {
+    RECORD_FUNCTION("gather_critical_values", {});
+    torch::Tensor max_values =
+        launch_gather_critical_values_cuda(ws.d_data, cpt.maxes, H, W, Nx, /*faces=*/true, IS_DUAL).cpu();
+    torch::Tensor min_values =
+        launch_gather_critical_values_cuda(ws.d_data, cpt.mins, H, W, Nx, /*faces=*/false, IS_DUAL).cpu();
+    cpu::update_gradient_helpers_from_values(ws, max_values.data_ptr<float>(), min_values.data_ptr<float>());
+  }
 }
 
 template <bool IS_DUAL = false, typename Workspace>
@@ -105,7 +111,6 @@ void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_verte
   const auto& min_alive = ws.p_data.min_alive;
   const auto& crit_maxes = ws.gradient_data.cp.maxes;
   const auto& crit_mins = ws.gradient_data.cp.mins;
-  const auto& fast_crit_map = ws.hlp.fast_crit_map;
   size_t num_crit_maxes = crit_maxes.size();
   size_t num_crit_mins = crit_mins.size();
 
@@ -128,11 +133,14 @@ void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_verte
   torch::Tensor d_crit_mins = gdata.d_mins.get();
   torch::Tensor d_crit_saddles = gdata.d_saddles.get();
 
-  torch::Tensor d_fast_crit_map = torch::full({num_cells}, -1, i_opts);
-  if (num_crit_maxes > 0) d_fast_crit_map.index_put_({d_crit_maxes}, torch::arange((long)num_crit_maxes, i_opts));
-  if (num_crit_mins > 0) d_fast_crit_map.index_put_({d_crit_mins}, torch::arange((long)num_crit_mins, i_opts));
-  if (d_crit_saddles.numel() > 0)
-    d_fast_crit_map.index_put_({d_crit_saddles}, torch::arange((long)d_crit_saddles.numel(), i_opts));
+  torch::Tensor d_fast_crit_map = ws.d_fast_crit_map;
+  if (!d_fast_crit_map.defined()) {
+    d_fast_crit_map = torch::full({num_cells}, -1, i_opts);
+    if (num_crit_maxes > 0) d_fast_crit_map.index_put_({d_crit_maxes}, torch::arange((long)num_crit_maxes, i_opts));
+    if (num_crit_mins > 0) d_fast_crit_map.index_put_({d_crit_mins}, torch::arange((long)num_crit_mins, i_opts));
+    if (d_crit_saddles.numel() > 0)
+      d_fast_crit_map.index_put_({d_crit_saddles}, torch::arange((long)d_crit_saddles.numel(), i_opts));
+  }
 
   torch::Tensor d_uf_max_parent = torch::from_blob((void*)uf_max.parent.data(), {(long)num_crit_maxes}, torch::kInt32)
                                       .to(dev, /*non_blocking=*/true);
@@ -204,8 +212,15 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   const auto& min_arcs_len = ws.arcs_topology.min_arcs_len;
 
   auto dev = ws.d_data.device();
-  torch::Tensor d_fast_crit_map =
-      torch::from_blob((void*)ws.hlp.fast_crit_map.data(), {num_cells}, torch::kInt32).to(dev, /*non_blocking=*/true);
+  auto int_opts = torch::TensorOptions().device(dev).dtype(torch::kInt32);
+  torch::Tensor d_fast_crit_map = torch::full({num_cells}, -1, int_opts);
+  auto d_maxes = gdata.d_maxes.get();
+  auto d_mins = gdata.d_mins.get();
+  torch::Tensor d_saddles = gdata.d_saddles.get();
+  if (d_maxes.numel() > 0) d_fast_crit_map.index_put_({d_maxes}, torch::arange(d_maxes.numel(), int_opts));
+  if (d_mins.numel() > 0) d_fast_crit_map.index_put_({d_mins}, torch::arange(d_mins.numel(), int_opts));
+  if (d_saddles.numel() > 0) d_fast_crit_map.index_put_({d_saddles}, torch::arange(d_saddles.numel(), int_opts));
+  ws.d_fast_crit_map = d_fast_crit_map;
 
   auto& out = ws.saddle_nodes;
   int num_saddles = max_arcs_len.size() / 2;
@@ -232,7 +247,6 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   }
 
   auto cuda_opts = torch::TensorOptions().device(dev);
-  auto int_opts = cuda_opts.dtype(torch::kInt32);
 
   // Allocate UNINITIALIZED memory natively on CUDA
   torch::Tensor d_saddle_nodes =
@@ -245,7 +259,6 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   torch::Tensor d_min_offsets =
       torch::from_blob(min_offsets.data(), {num_saddles * 2 + 1}, torch::kInt32).to(dev, /*non_blocking=*/true);
   torch::Tensor d_paired_with = gdata.d_paired_with.get();
-  torch::Tensor d_saddles = gdata.d_saddles.get();
   {
     RECORD_FUNCTION("kernel", {});
     // Extract raw pointers and dispatch to standard CUDA kernel
