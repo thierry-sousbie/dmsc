@@ -107,15 +107,14 @@ inline void tensors_to_sad_events(Workspace& ws, const TracedSaddlesTensors& ten
         int len1 = p_max_len[2 * max_idx];
         int len2 = p_max_len[2 * max_idx + 1];
 
-        out.sorted_max_saddles[i] = {-999, -1, -1, -1, -1, 0.0f};
+        out.sorted_max_saddles[i] = {-999, -1, -1, 0.0f};
         if (max1 != -1 && max2 != -1) {
-          out.sorted_max_saddles[i] = {s_id_max, max1, max2, max1_mid, max2_mid, s_val_max};
+          out.sorted_max_saddles[i] = {s_id_max, max1_mid, max2_mid, s_val_max};
           out.max_arcs_len[2 * max_idx] = len1;
           out.max_arcs_len[2 * max_idx + 1] = len2;
         } else if ((max1 != -1 && max2 == -1) || (max1 == -1 && max2 != -1)) {
-          int max_real = (max1 != -1) ? max1 : max2;
           int max_mid_real = (max1 != -1) ? max1_mid : max2_mid;
-          out.sorted_max_saddles[i] = {s_id_max, max_real, -1, max_mid_real, -1, s_val_max};
+          out.sorted_max_saddles[i] = {s_id_max, max_mid_real, -1, s_val_max};
           out.max_arcs_len[2 * max_idx] = (max1 != -1) ? len1 : len2;
         }
       }
@@ -134,15 +133,14 @@ inline void tensors_to_sad_events(Workspace& ws, const TracedSaddlesTensors& ten
         int len1 = p_min_len[2 * min_idx];
         int len2 = p_min_len[2 * min_idx + 1];
 
-        out.sorted_min_saddles[i] = {-999, -1, -1, -1, -1, 0.0f};
+        out.sorted_min_saddles[i] = {-999, -1, -1, 0.0f};
         if (min1 != -1 && min2 != -1) {
-          out.sorted_min_saddles[i] = {s_id_min, min1, min2, min1_mid, min2_mid, s_val_min};
+          out.sorted_min_saddles[i] = {s_id_min, min1_mid, min2_mid, s_val_min};
           out.min_arcs_len[2 * min_idx] = len1;
           out.min_arcs_len[2 * min_idx + 1] = len2;
         } else if ((min1 != -1 && min2 == -1) || (min1 == -1 && min2 != -1)) {
-          int min_real = (min1 != -1) ? min1 : min2;
           int min_mid_real = (min1 != -1) ? min1_mid : min2_mid;
-          out.sorted_min_saddles[i] = {s_id_min, min_real, -1, min_mid_real, -1, s_val_min};
+          out.sorted_min_saddles[i] = {s_id_min, min_mid_real, -1, s_val_min};
           out.min_arcs_len[2 * min_idx] = (min1 != -1) ? len1 : len2;
         }
       }

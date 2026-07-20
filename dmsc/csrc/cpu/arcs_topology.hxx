@@ -64,31 +64,6 @@ TraceRes trace_vertices_with_length(const Container& gradient_pairs, int start_v
   return {curr, steps};
 }
 
-template <bool IS_DUAL, typename Workspace>
-void update_crit_mids(Workspace& ws) {
-  RECORD_FUNCTION("helpers_saddle_nodes_mid", {});
-  auto& max_saddles = ws.arcs_topology.sorted_max_saddles;
-  auto& min_saddles = ws.arcs_topology.sorted_min_saddles;
-  const auto& fast_crit_map = ws.hlp.fast_crit_map;
-
-  // localize the mapping to the structure for cache, making the persistence thresholding loop faster
-  tbb::parallel_for(tbb::blocked_range<size_t>(0, min_saddles.size(), 1024), [&](const tbb::blocked_range<size_t>& r) {
-    for (size_t i = r.begin(); i != r.end(); ++i) {
-      auto& ev = min_saddles[i];
-      ev.c1_mid = (ev.c1_id != -1) ? fast_crit_map[ev.c1_id] : -1;
-      ev.c2_mid = (ev.c2_id != -1) ? fast_crit_map[ev.c2_id] : -1;
-    }
-  });
-
-  tbb::parallel_for(tbb::blocked_range<size_t>(0, max_saddles.size(), 1024), [&](const tbb::blocked_range<size_t>& r) {
-    for (size_t i = r.begin(); i != r.end(); ++i) {
-      auto& ev = max_saddles[i];
-      ev.c1_mid = (ev.c1_id != -1) ? fast_crit_map[ev.c1_id] : -1;
-      ev.c2_mid = (ev.c2_id != -1) ? fast_crit_map[ev.c2_id] : -1;
-    }
-  });
-}
-
 template <bool IS_DUAL, typename Workspace, typename scalar_t = float>
 void trace_from_saddles(Workspace& ws, const torch::Tensor& scalar_field) {
   int H = ws.H;
@@ -97,6 +72,7 @@ void trace_from_saddles(Workspace& ws, const torch::Tensor& scalar_field) {
   auto& arcs_topology = ws.arcs_topology;
   const auto& paired_with = ws.gradient_data.paired_with;
   const auto& crit_saddles = ws.gradient_data.cp.saddles;
+  const auto& fast_crit_map = ws.hlp.fast_crit_map;
   const scalar_t* data = scalar_field.data_ptr<scalar_t>();
 
   int num_saddles = crit_saddles.size();
@@ -146,14 +122,15 @@ void trace_from_saddles(Workspace& ws, const torch::Tensor& scalar_field) {
       TraceRes max1 = (f1 != -1) ? trace_faces_with_length(paired_with.data(), f1, Nx, H, W) : TraceRes{-1, 0};
       TraceRes max2 = (f2 != -1) ? trace_faces_with_length(paired_with.data(), f2, Nx, H, W) : TraceRes{-1, 0};
 
-      arcs_topology.sorted_max_saddles[j] = {-999, -1, -1, -1, -1, 0.0f};
+      arcs_topology.sorted_max_saddles[j] = {-999, -1, -1, 0.0f};
       if (max1.target != -1 && max2.target != -1) {
-        arcs_topology.sorted_max_saddles[j] = {s_id, max1.target, max2.target, -1, -1, v_s};
+        arcs_topology.sorted_max_saddles[j] = {
+            s_id, fast_crit_map[max1.target], fast_crit_map[max2.target], v_s};
         arcs_topology.max_arcs_len[2 * max_id] = max1.length;
         arcs_topology.max_arcs_len[2 * max_id + 1] = max2.length;
       } else if ((max1.target != -1 && max2.target == -1) || (max1.target == -1 && max2.target != -1)) {
         int max_real = (max1.target != -1) ? max1.target : max2.target;
-        arcs_topology.sorted_max_saddles[j] = {s_id, max_real, -1, -1, -1, v_s};
+        arcs_topology.sorted_max_saddles[j] = {s_id, fast_crit_map[max_real], -1, v_s};
         arcs_topology.max_arcs_len[2 * max_id] = (max1.target != -1) ? max1.length : max2.length;
       }
     }
@@ -179,20 +156,19 @@ void trace_from_saddles(Workspace& ws, const torch::Tensor& scalar_field) {
       TraceRes min1 = (v1 != -1) ? trace_vertices_with_length(paired_with.data(), v1, Nx, H, W) : TraceRes{-1, 0};
       TraceRes min2 = (v2 != -1) ? trace_vertices_with_length(paired_with.data(), v2, Nx, H, W) : TraceRes{-1, 0};
 
-      arcs_topology.sorted_min_saddles[j] = {-999, -1, -1, -1, -1, 0.0f};
+      arcs_topology.sorted_min_saddles[j] = {-999, -1, -1, 0.0f};
       if (min1.target != -1 && min2.target != -1) {
-        arcs_topology.sorted_min_saddles[j] = {s_id, min1.target, min2.target, -1, -1, v_s};
+        arcs_topology.sorted_min_saddles[j] = {
+            s_id, fast_crit_map[min1.target], fast_crit_map[min2.target], v_s};
         arcs_topology.min_arcs_len[2 * min_id] = min1.length;
         arcs_topology.min_arcs_len[2 * min_id + 1] = min2.length;
       } else if ((min1.target != -1 && min2.target == -1) || (min1.target == -1 && min2.target != -1)) {
         int min_real = (min1.target != -1) ? min1.target : min2.target;
-        arcs_topology.sorted_min_saddles[j] = {s_id, min_real, -1, -1, -1, v_s};
+        arcs_topology.sorted_min_saddles[j] = {s_id, fast_crit_map[min_real], -1, v_s};
         arcs_topology.min_arcs_len[2 * min_id] = (min1.target != -1) ? min1.length : min2.length;
       }
     }
   });
-
-  update_crit_mids<IS_DUAL>(ws);
 }
 
 }  // namespace cpu

@@ -175,8 +175,8 @@ struct Workspace {
             out_p_min[s_idx] = ev.persistence;
             out_ppairs_min[s_idx] = (ev.pair_id != -1) ? min_to_out[uf_min.find(ev.pair_id)] : -1;
 
-            int root_min1 = (ev.c1_id != -1) ? uf_min.find(ev.c1_mid) : -1;
-            int root_min2 = (ev.c2_id != -1) ? uf_min.find(ev.c2_mid) : -1;
+            int root_min1 = (ev.c1_mid != -1) ? uf_min.find(ev.c1_mid) : -1;
+            int root_min2 = (ev.c2_mid != -1) ? uf_min.find(ev.c2_mid) : -1;
 
             if (root_min1 != -1 && min_to_out[root_min1] != -1) {
               out_e_min[e_min_count * 2] = s_idx;
@@ -198,8 +198,8 @@ struct Workspace {
             out_p_max[s_idx] = ev.persistence;
             out_ppairs_max[s_idx] = (ev.pair_id != -1) ? max_to_out[uf_max.find(ev.pair_id)] : -1;
 
-            int root_max1 = (ev.c1_id != -1) ? uf_max.find(ev.c1_mid) : -1;
-            int root_max2 = (ev.c2_id != -1) ? uf_max.find(ev.c2_mid) : -1;
+            int root_max1 = (ev.c1_mid != -1) ? uf_max.find(ev.c1_mid) : -1;
+            int root_max2 = (ev.c2_mid != -1) ? uf_max.find(ev.c2_mid) : -1;
 
             if (root_max1 != -1 && max_to_out[root_max1] != -1) {
               out_e_max[e_max_count * 2] = s_idx;
