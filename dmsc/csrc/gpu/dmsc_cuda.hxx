@@ -111,7 +111,6 @@ void compute_cell_groups(Workspace& ws, bool trace_face_groups, bool trace_verte
   const auto& min_alive = ws.p_data.min_alive;
   const auto& crit_maxes = ws.gradient_data.cp.maxes;
   const auto& crit_mins = ws.gradient_data.cp.mins;
-  const auto& fast_crit_map = ws.hlp.fast_crit_map;
   size_t num_crit_maxes = crit_maxes.size();
   size_t num_crit_mins = crit_mins.size();
 
@@ -217,7 +216,7 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   torch::Tensor d_fast_crit_map = torch::full({num_cells}, -1, int_opts);
   auto d_maxes = gdata.d_maxes.get();
   auto d_mins = gdata.d_mins.get();
-  auto d_saddles = gdata.d_saddles.get();
+  torch::Tensor d_saddles = gdata.d_saddles.get();
   if (d_maxes.numel() > 0) d_fast_crit_map.index_put_({d_maxes}, torch::arange(d_maxes.numel(), int_opts));
   if (d_mins.numel() > 0) d_fast_crit_map.index_put_({d_mins}, torch::arange(d_mins.numel(), int_opts));
   if (d_saddles.numel() > 0) d_fast_crit_map.index_put_({d_saddles}, torch::arange(d_saddles.numel(), int_opts));
@@ -260,7 +259,6 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   torch::Tensor d_min_offsets =
       torch::from_blob(min_offsets.data(), {num_saddles * 2 + 1}, torch::kInt32).to(dev, /*non_blocking=*/true);
   torch::Tensor d_paired_with = gdata.d_paired_with.get();
-  torch::Tensor d_saddles = gdata.d_saddles.get();
   {
     RECORD_FUNCTION("kernel", {});
     // Extract raw pointers and dispatch to standard CUDA kernel

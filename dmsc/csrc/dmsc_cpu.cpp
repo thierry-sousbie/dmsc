@@ -30,9 +30,6 @@ template <bool IS_DUAL = false>
 DMSComplex extract_single_dmsc_cpu_t(torch::Tensor scalar_field, float persistence_threshold, bool return_gradient,
                                      bool trace_max_arcs, bool trace_min_arcs, bool trace_max_groups,
                                      bool trace_min_groups, cpu::Workspace& ws) {
-  int H = ws.H;
-  int W = ws.W;
-
   tbb::global_control control(tbb::global_control::max_allowed_parallelism, at::get_num_threads());
   if (IS_DUAL) {
     std::swap(trace_max_arcs, trace_min_arcs);
