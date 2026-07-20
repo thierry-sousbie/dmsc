@@ -104,6 +104,14 @@ class ManagedTensor {
     return copy_from_tensor(src, target_options);
   }
 
+  // Take ownership of an already materialized tensor without another copy.
+  torch::Tensor adopt(torch::Tensor tensor) {
+    active_tensor = std::move(tensor);
+    buffer = active_tensor.reshape({-1});
+    capacity = buffer.numel();
+    return active_tensor;
+  }
+
   // Convenience method: Copies a raw CPU pointer into a properly sized device tensor
   torch::Tensor copy_from_cpu_ptr(void* data, c10::IntArrayRef shape, torch::TensorOptions options) {
     RECORD_FUNCTION("managed_tensor_copy_from_cpu_ptr", {});

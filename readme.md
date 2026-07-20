@@ -11,24 +11,92 @@ This library computes topological critical points (maxima, minima, saddles), per
 * **Full Geometry**: Optionally extract the full geometry of the segmentation including exact ridge/valley lines and pixel-perfect basin segmentations.
 * **Morse-Smale complex**: Exact morse smale complex connectivity based on discrete Morse theory.
 
-## Installation
+## Installation with `uv`
 
-This project is built as a PyTorch C++ Extension. We recommend using `uv` for fast dependency management and building.
+DMSC builds native C++ and, when available, CUDA or Metal code. Install a C++17
+compiler first; CUDA builds also require a working NVIDIA driver and a CUDA
+toolkit containing `nvcc`.
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/thierry-sousbie/dmsc.git
-   cd dmsc
-   ```
+Clone the repository:
 
-2. Install the package in editable mode within a virtual environment. E.g., using uv:
-   ```bash
-   uv venv
-   uv pip install torch torchvision
-   uv pip install -e .
-   ```
-n.b.: If you re using CUDA, be carefull to install the appropriate torch version compatible with your CUDA drivers before installing `dmsc`. For CUDA12.8, replace the second line with:
-`uv pip install --reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128`
+```bash
+git clone https://github.com/thierry-sousbie/dmsc.git
+cd dmsc
+```
+
+### CPU or Apple Silicon (Metal/MPS)
+
+On macOS:
+
+```bash
+uv sync
+uv run pytest
+```
+
+`uv sync` creates the project-local `.venv` automatically if it does not
+already exist.
+
+PyTorch's macOS wheel includes MPS support. DMSC selects CUDA, MPS, or CPU from
+the input tensor's device; no separate Metal package is required.
+
+For an explicitly CPU-only Linux environment:
+
+```bash
+uv sync --torch-backend=cpu
+uv run pytest
+```
+
+### NVIDIA CUDA
+
+Choose a CUDA backend supported by the installed NVIDIA driver and by the
+available PyTorch wheels. Check the current PyTorch installation selector rather
+than assuming that the locally installed CUDA toolkit determines the wheel.
+Replace `BACKEND` below with the selected `uv` PyTorch backend. For example,
+`cu128` for CUDA 12.8.
+
+```bash
+uv venv
+uv pip install torch torchvision --torch-backend=BACKEND
+uv pip install -e . --no-build-isolation
+```
+
+Installing PyTorch first and disabling build isolation ensures that DMSC is
+compiled against that exact PyTorch installation instead of a second build-time
+copy.
+
+After selecting PyTorch manually, prevent `uv` from replacing it with the
+version selected by `uv.lock`:
+
+```bash
+uv run --no-sync pytest
+uv run --no-sync benchmark.py --workload segmentation --no-cpu
+uv run --no-sync python your_script.py
+```
+
+Running `.venv/bin/python` also uses the environment unchanged, but
+`uv run --no-sync` is the portable `uv` form. Plain `uv run` is appropriate
+when the environment is managed entirely with `uv sync`.
+
+Verify the active backend before testing or benchmarking:
+
+```bash
+uv run --no-sync python -c \
+  "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
+```
+
+### Common installation problems
+
+- **No compatible PyTorch CUDA build is found**: select a backend offered for
+  the desired PyTorch release, install PyTorch with
+  `--torch-backend=BACKEND`, then install DMSC with `--no-build-isolation`.
+- **PyTorch was upgraded or its backend changed**: rerun
+  `uv pip install -e . --no-build-isolation`. Native extensions must be rebuilt
+  against the active PyTorch installation.
+- **CUDA is unavailable**: check `nvidia-smi` and `nvcc --version`. A
+  CUDA-enabled PyTorch wheel cannot replace a missing host driver or compiler.
+- **`uv run` rebuilds or downloads PyTorch**: use `uv run --no-sync` when
+  PyTorch was selected with `uv pip`; otherwise let `uv sync` manage the full
+  environment.
 
 ## Visualizations
 
@@ -66,15 +134,22 @@ To verify your installation and see the library in action, run the test script. 
 uv run python test_dmsc.py
 ```
 
+For a manually configured CUDA environment, add `--no-sync` as described in
+the installation section.
+
 ### Basic Usage
 
 ```python
 import torch
 from dmsc import compute_dmsc, generate_noisy_landscape
 
-# Create a sample density map on the GPU (or use generate_noisy_landscape for a synthetic test image)
-# img = torch.randn(256, 256, device="cuda")
-img = generate_noisy_landscape(H=256, W=256, with_loop=True).cuda()
+# Use CUDA when available, otherwise Apple MPS or CPU.
+device = (
+    "cuda" if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available()
+    else "cpu"
+)
+img = generate_noisy_landscape(H=256, W=256, with_loop=True).to(device)
 
 # Extract the Morse-Smale Complex
 # persistence_threshold: Filters topological noise below this value

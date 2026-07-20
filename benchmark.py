@@ -161,6 +161,7 @@ def run_all_benchmarks(
     trace_ridges=True,
     trace_peaks=True,
     trace_basins=True,
+    return_gradient=True,
     test_batches=True,
     num_threads=None,
     resolution=None,
@@ -198,7 +199,10 @@ def run_all_benchmarks(
 
     for t in thresholds:
         print(f"\n{'=' * 85}")
-        opt_str = f"{trace_valleys=}, {trace_ridges=}, {trace_peaks=}, {trace_basins=}"
+        opt_str = (
+            f"{trace_valleys=}, {trace_ridges=}, {trace_peaks=}, "
+            f"{trace_basins=}, {return_gradient=}"
+        )
         print(f" BENCHMARK({opt_str}): Persistence Threshold = {t}")
         print(f"{'=' * 85}")
         print(
@@ -221,6 +225,7 @@ def run_all_benchmarks(
                 trace_ridges=trace_ridges,
                 trace_peaks=trace_peaks,
                 trace_basins=trace_basins,
+                return_gradient=return_gradient,
             )
 
             # 2. CPU Max Threads (Sequential)
@@ -236,6 +241,7 @@ def run_all_benchmarks(
                 trace_ridges=trace_ridges,
                 trace_peaks=trace_peaks,
                 trace_basins=trace_basins,
+                return_gradient=return_gradient,
             )
 
             # 3. CPU Max Threads (Batched)
@@ -252,6 +258,7 @@ def run_all_benchmarks(
                     trace_ridges=trace_ridges,
                     trace_peaks=trace_peaks,
                     trace_basins=trace_basins,
+                    return_gradient=return_gradient,
                 )
 
         # Hardware Accelerated (GPU)
@@ -270,6 +277,7 @@ def run_all_benchmarks(
                 trace_ridges=trace_ridges,
                 trace_peaks=trace_peaks,
                 trace_basins=trace_basins,
+                return_gradient=return_gradient,
             )
 
             # 5. GPU (Batched)
@@ -286,6 +294,7 @@ def run_all_benchmarks(
                     trace_ridges=trace_ridges,
                     trace_peaks=trace_peaks,
                     trace_basins=trace_basins,
+                    return_gradient=return_gradient,
                 )
 
     if output_json:
@@ -295,6 +304,10 @@ def run_all_benchmarks(
             "num_threads": num_threads,
             "torch_version": str(torch.__version__),
             "device": str(device),
+<<<<<<< HEAD
+=======
+            "return_gradient": return_gradient,
+>>>>>>> batching
             "results": results,
         }
         with open(output_json, "w") as f:
@@ -325,14 +338,39 @@ if __name__ == "__main__":
     parser.add_argument("--num-threads", type=int, default=4, help="Number of threads to use (-1 -> max avail.)")
     parser.add_argument("--seed", type=int, default=1234, help="Random seed used to generate the landscape")
     parser.add_argument("--output-json", help="Write raw timings and metadata to this JSON file")
+<<<<<<< HEAD
+=======
+    parser.add_argument("--no-cpu", action="store_true", help="Skip CPU configurations")
+    parser.add_argument("--no-gpu", action="store_true", help="Skip CUDA/MPS configurations")
+    parser.add_argument("--no-batches", action="store_true", help="Skip batched configurations")
+    parser.add_argument(
+        "--workload",
+        choices=("full", "segmentation"),
+        default="full",
+        help=(
+            "Benchmark preset: 'full' returns every structure; 'segmentation' "
+            "returns peaks and basins without arcs or the raw gradient"
+        ),
+    )
+>>>>>>> batching
     args = parser.parse_args()
+
+    if args.workload == "segmentation":
+        args.trace_valleys = False
+        args.trace_ridges = False
+        args.trace_peaks = True
+        args.trace_basins = True
 
     run_all_benchmarks(
         enable_profiler=args.profile,
+        test_cpu=not args.no_cpu,
+        test_gpu=not args.no_gpu,
+        test_batches=not args.no_batches,
         trace_valleys=args.trace_valleys,
         trace_ridges=args.trace_ridges,
         trace_peaks=args.trace_peaks,
         trace_basins=args.trace_basins,
+        return_gradient=args.workload == "full",
         num_threads=args.num_threads,
         resolution=args.resolution,
         seed=args.seed,

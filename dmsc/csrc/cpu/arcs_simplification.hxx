@@ -142,6 +142,10 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
   }
 
   auto cpu_int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU);
+  auto flat_max_geom = sn.flat_max_geom.get();
+  auto flat_min_geom = sn.flat_min_geom.get();
+  bool gather_max_on_device = flat_max_geom.device().is_cuda();
+  bool gather_min_on_device = flat_min_geom.device().is_cuda();
 
   if (final_max_offset.back() < 0) {
     printf("ERROR: final_max_offset.back() is %d\n", final_max_offset.back());
@@ -150,15 +154,36 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
     printf("ERROR: final_min_offset.back() is %d\n", final_min_offset.back());
   }
 
-  auto new_flat_max_geom = ws.hlp.temp_flat_max.request({(long)final_max_offset.back()}, cpu_int_opts);
-  auto new_flat_min_geom = ws.hlp.temp_flat_min.request({(long)final_min_offset.back()}, cpu_int_opts);
+  torch::Tensor new_flat_max_geom;
+  torch::Tensor new_flat_min_geom;
+  if (!gather_max_on_device) {
+    new_flat_max_geom = ws.hlp.temp_flat_max.request({(long)final_max_offset.back()}, cpu_int_opts);
+  }
+  if (!gather_min_on_device) {
+    new_flat_min_geom = ws.hlp.temp_flat_min.request({(long)final_min_offset.back()}, cpu_int_opts);
+  }
 
-  int* out_max_ptr = new_flat_max_geom.template data_ptr<int>();
-  int* out_min_ptr = new_flat_min_geom.template data_ptr<int>();
-  auto flat_max_geom = sn.flat_max_geom.get();
-  auto flat_min_geom = sn.flat_min_geom.get();
-  const int* old_max_ptr = flat_max_geom.template data_ptr<int>();
-  const int* old_min_ptr = flat_min_geom.template data_ptr<int>();
+  torch::Tensor max_gather_indices;
+  torch::Tensor min_gather_indices;
+  int* out_max_ptr = nullptr;
+  int* out_min_ptr = nullptr;
+  const int* old_max_ptr = nullptr;
+  const int* old_min_ptr = nullptr;
+
+  if (gather_max_on_device) {
+    max_gather_indices = torch::empty({(long)final_max_offset.back()}, cpu_int_opts);
+    out_max_ptr = max_gather_indices.template data_ptr<int>();
+  } else {
+    out_max_ptr = new_flat_max_geom.template data_ptr<int>();
+    old_max_ptr = flat_max_geom.template data_ptr<int>();
+  }
+  if (gather_min_on_device) {
+    min_gather_indices = torch::empty({(long)final_min_offset.back()}, cpu_int_opts);
+    out_min_ptr = min_gather_indices.template data_ptr<int>();
+  } else {
+    out_min_ptr = new_flat_min_geom.template data_ptr<int>();
+    old_min_ptr = flat_min_geom.template data_ptr<int>();
+  }
 
   struct StackItem {
     int id;
@@ -167,7 +192,7 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
   tbb::enumerable_thread_specific<std::vector<StackItem>> tls_stack;
 
   auto WriteGeomFlat = [&](RefType path, int* out_flat, int start_offset, const NodeType* dag, const int* old_flat,
-                           const int* base_offsets, const int* base_lens) {
+                           const int* base_offsets, const int* base_lens, bool write_gather_indices) {
     if (path.id == -1) return;
 
     auto& stack_buf = tls_stack.local();
@@ -182,7 +207,13 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
       if (curr.id < N2) {
         int len = base_lens[curr.id];
         int off = base_offsets[curr.id];
-        if (curr.fwd) {
+        if (write_gather_indices) {
+          if (curr.fwd) {
+            for (int k = 0; k < len; ++k) out_flat[write_head++] = off + k;
+          } else {
+            for (int k = 0; k < len; ++k) out_flat[write_head++] = off + len - 1 - k;
+          }
+        } else if (curr.fwd) {
           std::memcpy(&out_flat[write_head], &old_flat[off], len * sizeof(int));
           write_head += len;
         } else {
@@ -224,7 +255,7 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
           sn.nodes[idx].max_arcs[0].offset = final_max_offset[2 * idx];
           sn.nodes[idx].max_arcs[0].length = final_max_len[2 * idx];
           WriteGeomFlat(final_max_path[2 * idx], out_max_ptr, final_max_offset[2 * idx], p_max_dag, old_max_ptr,
-                        base_max_offset.data(), p_base_max_len);
+                        base_max_offset.data(), p_base_max_len, gather_max_on_device);
         }
 
         int TM1 = init_t_max[2 * idx + 1];
@@ -233,7 +264,7 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
           sn.nodes[idx].max_arcs[1].offset = final_max_offset[2 * idx + 1];
           sn.nodes[idx].max_arcs[1].length = final_max_len[2 * idx + 1];
           WriteGeomFlat(final_max_path[2 * idx + 1], out_max_ptr, final_max_offset[2 * idx + 1], p_max_dag, old_max_ptr,
-                        base_max_offset.data(), p_base_max_len);
+                        base_max_offset.data(), p_base_max_len, gather_max_on_device);
         }
 
         int TN0 = init_t_min[2 * idx];
@@ -242,7 +273,7 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
           sn.nodes[idx].min_arcs[0].offset = final_min_offset[2 * idx];
           sn.nodes[idx].min_arcs[0].length = final_min_len[2 * idx];
           WriteGeomFlat(final_min_path[2 * idx], out_min_ptr, final_min_offset[2 * idx], p_min_dag, old_min_ptr,
-                        base_min_offset.data(), p_base_min_len);
+                        base_min_offset.data(), p_base_min_len, gather_min_on_device);
         }
 
         int TN1 = init_t_min[2 * idx + 1];
@@ -251,14 +282,29 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
           sn.nodes[idx].min_arcs[1].offset = final_min_offset[2 * idx + 1];
           sn.nodes[idx].min_arcs[1].length = final_min_len[2 * idx + 1];
           WriteGeomFlat(final_min_path[2 * idx + 1], out_min_ptr, final_min_offset[2 * idx + 1], p_min_dag, old_min_ptr,
-                        base_min_offset.data(), p_base_min_len);
+                        base_min_offset.data(), p_base_min_len, gather_min_on_device);
         }
       }
     });
   }
 
-  sn.flat_max_geom.copy_from_tensor(new_flat_max_geom);
-  sn.flat_min_geom.copy_from_tensor(new_flat_min_geom);
+  if (gather_max_on_device) {
+    new_flat_max_geom = flat_max_geom.index_select(0, max_gather_indices.to(flat_max_geom.device()));
+  }
+  if (gather_min_on_device) {
+    new_flat_min_geom = flat_min_geom.index_select(0, min_gather_indices.to(flat_min_geom.device()));
+  }
+
+  if (gather_max_on_device) {
+    sn.flat_max_geom.adopt(std::move(new_flat_max_geom));
+  } else {
+    sn.flat_max_geom.copy_from_tensor(new_flat_max_geom);
+  }
+  if (gather_min_on_device) {
+    sn.flat_min_geom.adopt(std::move(new_flat_min_geom));
+  } else {
+    sn.flat_min_geom.copy_from_tensor(new_flat_min_geom);
+  }
 }
 
 template <typename Workspace>

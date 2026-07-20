@@ -7,8 +7,6 @@ namespace cpu {
 
 struct SadEvent {
   int saddle_id;
-  int c1_id;
-  int c2_id;
   int c1_mid;  // mapped id (to the MS complex datastructure)
   int c2_mid;  // mapped id (to the MS complex datastructure)
   float s_val;
