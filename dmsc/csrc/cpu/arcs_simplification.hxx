@@ -154,12 +154,14 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
     printf("ERROR: final_min_offset.back() is %d\n", final_min_offset.back());
   }
 
-  auto new_flat_max_geom =
-      ws.hlp.temp_flat_max.request({(long)final_max_offset.back()},
-                                   gather_max_on_device ? flat_max_geom.options() : cpu_int_opts);
-  auto new_flat_min_geom =
-      ws.hlp.temp_flat_min.request({(long)final_min_offset.back()},
-                                   gather_min_on_device ? flat_min_geom.options() : cpu_int_opts);
+  torch::Tensor new_flat_max_geom;
+  torch::Tensor new_flat_min_geom;
+  if (!gather_max_on_device) {
+    new_flat_max_geom = ws.hlp.temp_flat_max.request({(long)final_max_offset.back()}, cpu_int_opts);
+  }
+  if (!gather_min_on_device) {
+    new_flat_min_geom = ws.hlp.temp_flat_min.request({(long)final_min_offset.back()}, cpu_int_opts);
+  }
 
   torch::Tensor max_gather_indices;
   torch::Tensor min_gather_indices;
@@ -286,15 +288,23 @@ void assemble_simplified_geometry(Workspace& ws, const std::vector<uint8_t>& max
     });
   }
 
-  if (gather_max_on_device && max_gather_indices.numel() > 0) {
-    new_flat_max_geom.copy_(flat_max_geom.index_select(0, max_gather_indices.to(flat_max_geom.device())));
+  if (gather_max_on_device) {
+    new_flat_max_geom = flat_max_geom.index_select(0, max_gather_indices.to(flat_max_geom.device()));
   }
-  if (gather_min_on_device && min_gather_indices.numel() > 0) {
-    new_flat_min_geom.copy_(flat_min_geom.index_select(0, min_gather_indices.to(flat_min_geom.device())));
+  if (gather_min_on_device) {
+    new_flat_min_geom = flat_min_geom.index_select(0, min_gather_indices.to(flat_min_geom.device()));
   }
 
-  sn.flat_max_geom.copy_from_tensor(new_flat_max_geom);
-  sn.flat_min_geom.copy_from_tensor(new_flat_min_geom);
+  if (gather_max_on_device) {
+    sn.flat_max_geom.adopt(std::move(new_flat_max_geom));
+  } else {
+    sn.flat_max_geom.copy_from_tensor(new_flat_max_geom);
+  }
+  if (gather_min_on_device) {
+    sn.flat_min_geom.adopt(std::move(new_flat_min_geom));
+  } else {
+    sn.flat_min_geom.copy_from_tensor(new_flat_min_geom);
+  }
 }
 
 template <typename Workspace>

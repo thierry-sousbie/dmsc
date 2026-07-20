@@ -297,12 +297,12 @@ struct Workspace {
             if (gather_max_on_device && num_ridge_faces > 0) {
               auto indices = hlp.out_ridge_faces.get().to(dev);
               auto gathered = flat_max_geom.index_select(0, indices);
-              hlp.out_ridge_faces.copy_from_tensor(gathered, dev_opts_i);
+              hlp.out_ridge_faces.adopt(std::move(gathered));
             }
             if (gather_min_on_device && num_ridge_vertices > 0) {
               auto indices = hlp.out_ridge_vertices.get().to(dev);
               auto gathered = flat_min_geom.index_select(0, indices);
-              hlp.out_ridge_vertices.copy_from_tensor(gathered, dev_opts_i);
+              hlp.out_ridge_vertices.adopt(std::move(gathered));
             }
           }
         });

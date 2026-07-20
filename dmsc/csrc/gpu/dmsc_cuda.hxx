@@ -35,10 +35,10 @@ gpu::TracedSaddlesTensors launch_trace_from_saddles_cuda(torch::Tensor& active_f
                                                          torch::Tensor& saddles_tensor, int H, int W, int Nx,
                                                          bool is_dual);
 
-void launch_trace_raw_arcs_geometry_cuda(const int* d_paired_with, const int* d_fast_crit_map,
-                                         const int* d_crit_saddles, const int* d_max_offsets, const int* d_min_offsets,
-                                         int* d_flat_max, int* d_flat_min, void* d_saddle_nodes, int H, int W, int Nx,
-                                         int num_saddles, bool trace_max_arcs, bool trace_min_arcs);
+void launch_trace_raw_arcs_geometry_cuda(const int* d_paired_with, const int* d_crit_saddles,
+                                         const int* d_max_offsets, const int* d_min_offsets, int* d_flat_max,
+                                         int* d_flat_min, int H, int W, int Nx, int num_saddles, bool trace_max_arcs,
+                                         bool trace_min_arcs);
 
 void launch_simplify_arcs_cuda(torch::Tensor d_cancels, torch::Tensor d_init_t, torch::Tensor d_parent_ptrs,
                                torch::Tensor d_weights, torch::Tensor d_dag, torch::Tensor d_base_lens,
@@ -243,14 +243,30 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
         min_offsets[i + 1] = 0;
       }
     }
-    out.nodes.resize(num_saddles);
+    out.nodes.assign(num_saddles, SaddleNode{});
+    for (int i = 0; i < num_saddles; ++i) {
+      out.nodes[i].alive = 1;
+      for (int k = 0; k < 2; ++k) {
+        out.nodes[i].max_arcs[k] = {-1, max_offsets[2 * i + k], trace_max_arcs ? max_arcs_len[2 * i + k] : 0};
+        out.nodes[i].min_arcs[k] = {-1, min_offsets[2 * i + k], trace_min_arcs ? min_arcs_len[2 * i + k] : 0};
+      }
+    }
+
+    auto assign_targets = [&](const std::vector<SadEvent>& events, bool max_arcs) {
+      for (const auto& event : events) {
+        if (event.saddle_id < 0) continue;
+        int saddle_idx = ws.hlp.fast_crit_map[event.saddle_id];
+        if (saddle_idx < 0) continue;
+        Arc* arcs = max_arcs ? out.nodes[saddle_idx].max_arcs : out.nodes[saddle_idx].min_arcs;
+        arcs[0].target = event.c1_mid;
+        arcs[1].target = event.c2_mid;
+      }
+    };
+    if (trace_max_arcs) assign_targets(ws.arcs_topology.sorted_max_saddles, true);
+    if (trace_min_arcs) assign_targets(ws.arcs_topology.sorted_min_saddles, false);
   }
 
-  auto cuda_opts = torch::TensorOptions().device(dev);
-
   // Allocate UNINITIALIZED memory natively on CUDA
-  torch::Tensor d_saddle_nodes =
-      torch::empty({(long)(num_saddles * sizeof(SaddleNode))}, cuda_opts.dtype(torch::kUInt8));
   torch::Tensor d_flat_max = torch::empty({(long)max_offsets.back()}, int_opts);
   torch::Tensor d_flat_min = torch::empty({(long)min_offsets.back()}, int_opts);
 
@@ -263,10 +279,10 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
     RECORD_FUNCTION("kernel", {});
     // Extract raw pointers and dispatch to standard CUDA kernel
     launch_trace_raw_arcs_geometry_cuda(
-        d_paired_with.data_ptr<int>(), d_fast_crit_map.data_ptr<int>(), d_saddles.data_ptr<int>(),
-        d_max_offsets.data_ptr<int>(), d_min_offsets.data_ptr<int>(),
+        d_paired_with.data_ptr<int>(), d_saddles.data_ptr<int>(), d_max_offsets.data_ptr<int>(),
+        d_min_offsets.data_ptr<int>(),
         trace_max_arcs ? d_flat_max.data_ptr<int>() : nullptr, trace_min_arcs ? d_flat_min.data_ptr<int>() : nullptr,
-        d_saddle_nodes.data_ptr<uint8_t>(), H, W, Nx, num_saddles, trace_max_arcs, trace_min_arcs);
+        H, W, Nx, num_saddles, trace_max_arcs, trace_min_arcs);
   }
 
   // Geometry is not consumed by CPU persistence. Keep the potentially large
@@ -275,7 +291,6 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
   out.flat_max_geom.copy_from_tensor(d_flat_max, int_opts);
   out.flat_min_geom.copy_from_tensor(d_flat_min, int_opts);
 
-  torch::from_blob(out.nodes.data(), {(long)(num_saddles * sizeof(SaddleNode))}, torch::kUInt8).copy_(d_saddle_nodes);
 }
 
 template <typename Workspace>
