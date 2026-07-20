@@ -250,8 +250,12 @@ struct Workspace {
 
             auto flat_max_geom = saddle_nodes.flat_max_geom.get();
             auto flat_min_geom = saddle_nodes.flat_min_geom.get();
-            const int* flat_max_ptr = flat_max_geom.template data_ptr<int>();
-            const int* flat_min_ptr = flat_min_geom.template data_ptr<int>();
+            bool gather_max_on_device = flat_max_geom.device().is_cuda();
+            bool gather_min_on_device = flat_min_geom.device().is_cuda();
+            const int* flat_max_ptr =
+                gather_max_on_device ? nullptr : flat_max_geom.template data_ptr<int>();
+            const int* flat_min_ptr =
+                gather_min_on_device ? nullptr : flat_min_geom.template data_ptr<int>();
 
             for (const auto& ev : min_saddles) {
               int original_saddle_id = out_sad[ev.saddle_id];
@@ -262,8 +266,12 @@ struct Workspace {
               if (trace_max_arcs) {
                 for (int k = 0; k < 2; ++k) {
                   int len = node.max_arcs[k].length;
-                  const int* start = flat_max_ptr + node.max_arcs[k].offset;
-                  std::memcpy(out_ridge_faces + f_idx, start, len * sizeof(int));
+                  if (gather_max_on_device) {
+                    for (int j = 0; j < len; ++j) out_ridge_faces[f_idx + j] = node.max_arcs[k].offset + j;
+                  } else {
+                    const int* start = flat_max_ptr + node.max_arcs[k].offset;
+                    std::memcpy(out_ridge_faces + f_idx, start, len * sizeof(int));
+                  }
                   f_idx += len;
                   if (k == 0) out_arc_faces_off[a_f_off_idx++] = f_idx;
                 }
@@ -273,13 +281,28 @@ struct Workspace {
               if (trace_min_arcs) {
                 for (int k = 0; k < 2; ++k) {
                   int len = node.min_arcs[k].length;
-                  const int* start = flat_min_ptr + node.min_arcs[k].offset;
-                  std::memcpy(out_ridge_vertices + v_idx, start, len * sizeof(int));
+                  if (gather_min_on_device) {
+                    for (int j = 0; j < len; ++j) out_ridge_vertices[v_idx + j] = node.min_arcs[k].offset + j;
+                  } else {
+                    const int* start = flat_min_ptr + node.min_arcs[k].offset;
+                    std::memcpy(out_ridge_vertices + v_idx, start, len * sizeof(int));
+                  }
                   v_idx += len;
                   if (k == 0) out_arc_vertices_off[a_v_off_idx++] = v_idx;
                 }
                 out_ridge_vertices_off[r_v_off_idx++] = v_idx;
               }
+            }
+
+            if (gather_max_on_device && num_ridge_faces > 0) {
+              auto indices = hlp.out_ridge_faces.get().to(dev);
+              auto gathered = flat_max_geom.index_select(0, indices);
+              hlp.out_ridge_faces.copy_from_tensor(gathered, dev_opts_i);
+            }
+            if (gather_min_on_device && num_ridge_vertices > 0) {
+              auto indices = hlp.out_ridge_vertices.get().to(dev);
+              auto gathered = flat_min_geom.index_select(0, indices);
+              hlp.out_ridge_vertices.copy_from_tensor(gathered, dev_opts_i);
             }
           }
         });

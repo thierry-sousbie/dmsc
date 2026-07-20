@@ -269,10 +269,11 @@ void trace_raw_arcs_geometry(Workspace& ws, bool trace_max_arcs, bool trace_min_
         d_saddle_nodes.data_ptr<uint8_t>(), H, W, Nx, num_saddles, trace_max_arcs, trace_min_arcs);
   }
 
-  // out.flat_max_geom = d_flat_max.cpu();
-  // out.flat_min_geom = d_flat_min.cpu();
-  out.flat_max_geom.copy_from_tensor(d_flat_max, torch::TensorOptions().device(torch::kCPU).dtype(torch::kInt32));
-  out.flat_min_geom.copy_from_tensor(d_flat_min, torch::TensorOptions().device(torch::kCPU).dtype(torch::kInt32));
+  // Geometry is not consumed by CPU persistence. Keep the potentially large
+  // coordinate arenas on-device; simplification resolves their path topology on
+  // the CPU and gathers the surviving paths directly on CUDA.
+  out.flat_max_geom.copy_from_tensor(d_flat_max, int_opts);
+  out.flat_min_geom.copy_from_tensor(d_flat_min, int_opts);
 
   torch::from_blob(out.nodes.data(), {(long)(num_saddles * sizeof(SaddleNode))}, torch::kUInt8).copy_(d_saddle_nodes);
 }
