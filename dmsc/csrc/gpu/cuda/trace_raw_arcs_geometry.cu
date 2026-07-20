@@ -3,6 +3,19 @@
 #include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDAStream.h>
 
+// Core Structs (match C++ host definition)
+struct Arc {
+  int target;
+  int offset;
+  int length;
+};
+
+struct SaddleNode {
+  int alive;
+  Arc max_arcs[2];
+  Arc min_arcs[2];
+};
+
 struct TraceResult {
   int target;
   int length;
@@ -92,15 +105,22 @@ __device__ inline TraceResult trace_geom_vertex(int start_v, const int* paired_w
   return {curr, count};
 }
 
-__global__ void trace_raw_arcs_geometry_kernel(const int* paired_with, const int* crit_saddles,
-                                               const int* max_offsets, const int* min_offsets, int* flat_max_geom,
-                                               int* flat_min_geom, int H, int W, int Nx, int num_saddles,
-                                               bool trace_max_arcs, bool trace_min_arcs) {
+__global__ void trace_raw_arcs_geometry_kernel(const int* paired_with, const int* fast_crit_map,
+                                               const int* crit_saddles, const int* max_offsets, const int* min_offsets,
+                                               int* flat_max_geom, int* flat_min_geom, SaddleNode* saddle_nodes, int H,
+                                               int W, int Nx, int num_saddles, bool trace_max_arcs,
+                                               bool trace_min_arcs) {
   int id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id >= num_saddles) return;
 
   int s_id = crit_saddles[id];
   int ey = get_y(s_id, Nx), ex = get_x(s_id, Nx), type = get_type(s_id);
+
+  saddle_nodes[id].alive = 1;
+  for (int i = 0; i < 2; ++i) {
+    saddle_nodes[id].max_arcs[i] = {-1, 0, 0};
+    saddle_nodes[id].min_arcs[i] = {-1, 0, 0};
+  }
 
   // MAX ARCS (Faces)
   if (trace_max_arcs) {
@@ -117,12 +137,16 @@ __global__ void trace_raw_arcs_geometry_kernel(const int* paired_with, const int
     if (f1 != -1) {
       int arc_idx = valid_max++;
       int base_off = max_offsets[2 * id + arc_idx];
-      trace_geom_face(f1, paired_with, flat_max_geom, base_off, H, W, Nx);
+      TraceResult result = trace_geom_face(f1, paired_with, flat_max_geom, base_off, H, W, Nx);
+      int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
+      saddle_nodes[id].max_arcs[arc_idx] = {target, base_off, result.length};
     }
     if (f2 != -1) {
       int arc_idx = valid_max++;
       int base_off = max_offsets[2 * id + arc_idx];
-      trace_geom_face(f2, paired_with, flat_max_geom, base_off, H, W, Nx);
+      TraceResult result = trace_geom_face(f2, paired_with, flat_max_geom, base_off, H, W, Nx);
+      int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
+      saddle_nodes[id].max_arcs[arc_idx] = {target, base_off, result.length};
     }
   }
 
@@ -141,26 +165,30 @@ __global__ void trace_raw_arcs_geometry_kernel(const int* paired_with, const int
     if (v1 != -1) {
       int arc_idx = valid_min++;
       int base_off = min_offsets[2 * id + arc_idx];
-      trace_geom_vertex(v1, paired_with, flat_min_geom, base_off, H, W, Nx);
+      TraceResult result = trace_geom_vertex(v1, paired_with, flat_min_geom, base_off, H, W, Nx);
+      int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
+      saddle_nodes[id].min_arcs[arc_idx] = {target, base_off, result.length};
     }
     if (v2 != -1) {
       int arc_idx = valid_min++;
       int base_off = min_offsets[2 * id + arc_idx];
-      trace_geom_vertex(v2, paired_with, flat_min_geom, base_off, H, W, Nx);
+      TraceResult result = trace_geom_vertex(v2, paired_with, flat_min_geom, base_off, H, W, Nx);
+      int target = (result.target != -1) ? fast_crit_map[result.target] : -1;
+      saddle_nodes[id].min_arcs[arc_idx] = {target, base_off, result.length};
     }
   }
 }
 
-void launch_trace_raw_arcs_geometry_cuda(const int* d_paired_with, const int* d_crit_saddles,
-                                         const int* d_max_offsets, const int* d_min_offsets, int* d_flat_max,
-                                         int* d_flat_min, int H, int W, int Nx, int num_saddles, bool trace_max_arcs,
-                                         bool trace_min_arcs) {
+void launch_trace_raw_arcs_geometry_cuda(const int* d_paired_with, const int* d_fast_crit_map,
+                                         const int* d_crit_saddles, const int* d_max_offsets, const int* d_min_offsets,
+                                         int* d_flat_max, int* d_flat_min, void* d_saddle_nodes, int H, int W, int Nx,
+                                         int num_saddles, bool trace_max_arcs, bool trace_min_arcs) {
   int threads = 256;
   int blocks = (num_saddles + threads - 1) / threads;
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
   trace_raw_arcs_geometry_kernel<<<blocks, threads, 0, stream>>>(
-      d_paired_with, d_crit_saddles, d_max_offsets, d_min_offsets, d_flat_max, d_flat_min, H, W, Nx, num_saddles,
-      trace_max_arcs, trace_min_arcs);
+      d_paired_with, d_fast_crit_map, d_crit_saddles, d_max_offsets, d_min_offsets, d_flat_max, d_flat_min,
+      (SaddleNode*)d_saddle_nodes, H, W, Nx, num_saddles, trace_max_arcs, trace_min_arcs);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
