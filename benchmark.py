@@ -338,8 +338,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-threads", type=int, default=4, help="Number of threads to use (-1 -> max avail.)")
     parser.add_argument("--seed", type=int, default=1234, help="Random seed used to generate the landscape")
     parser.add_argument("--output-json", help="Write raw timings and metadata to this JSON file")
-<<<<<<< HEAD
-=======
     parser.add_argument("--no-cpu", action="store_true", help="Skip CPU configurations")
     parser.add_argument("--no-gpu", action="store_true", help="Skip CUDA/MPS configurations")
     parser.add_argument("--no-batches", action="store_true", help="Skip batched configurations")
@@ -352,7 +350,6 @@ if __name__ == "__main__":
             "returns peaks and basins without arcs or the raw gradient"
         ),
     )
->>>>>>> batching
     args = parser.parse_args()
 
     if args.workload == "segmentation":
