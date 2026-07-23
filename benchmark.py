@@ -199,10 +199,7 @@ def run_all_benchmarks(
 
     for t in thresholds:
         print(f"\n{'=' * 85}")
-        opt_str = (
-            f"{trace_valleys=}, {trace_ridges=}, {trace_peaks=}, "
-            f"{trace_basins=}, {return_gradient=}"
-        )
+        opt_str = f"{trace_valleys=}, {trace_ridges=}, {trace_peaks=}, {trace_basins=}, {return_gradient=}"
         print(f" BENCHMARK({opt_str}): Persistence Threshold = {t}")
         print(f"{'=' * 85}")
         print(
@@ -304,10 +301,7 @@ def run_all_benchmarks(
             "num_threads": num_threads,
             "torch_version": str(torch.__version__),
             "device": str(device),
-<<<<<<< HEAD
-=======
             "return_gradient": return_gradient,
->>>>>>> batching
             "results": results,
         }
         with open(output_json, "w") as f:
